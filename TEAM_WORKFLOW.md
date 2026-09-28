@@ -26,7 +26,7 @@ origin    git@github.com:shiyujie167-ui/Niu-DaLi.git
 upstream  https://github.com/QuantumNous/new-api.git
 ```
 
-本机已设置 `remote.pushDefault=origin` 和 `pull.ff=only`，取消了本地 `main` 对官方分支的旧跟踪关系。团队 `origin/main` 已成功获取，但其 README 初始历史与本地上游历史不同；首次导入通过 `codex/team-git-workflow` 分支整合，审核合并后再同步本地 `main` 和跟踪关系。上述是本机 Git 配置，不会随提交传给其他成员。
+本机已设置 `remote.pushDefault=origin` 和 `pull.ff=only`，取消了本地 `main` 对官方分支的旧跟踪关系。团队仓库的 README 初始历史与本地上游历史已完成整合。首次上传使用临时协作分支；随后负责人明确要求直接更新到 `main`，本次初始化按该指示将完整代码纳入 `main`，保留双方历史。后续日常开发仍遵循任务分支和 PR 规则。上述是本机 Git 配置，不会随提交传给其他成员。
 
 本机原先没有 SSH 身份密钥，22 端口连接也被中断。现已在 `~/.ssh/` 生成专用 Ed25519 密钥，并通过本仓库的 `core.sshCommand` 使用 SSH 443 端口、固定身份文件和已核实的 GitHub 主机公钥；这不会修改其他项目的 SSH 配置。私钥权限为 `0600`，不进入项目目录或 Git。GitHub 已保存本机的仓库专用读写 Deploy key，`git ls-remote origin` 和 `git fetch --no-tags origin` 均已通过。初次获取的远程 `main` 为 `c409330663feb20cad4d0bc2582f8e9f1a364d3c`。首次代码导入保留该提交及上游历史，不使用强推；分支保护仍需另行设置。每位协作者应使用自己的凭据，不能复制这台 Mac 的私钥。
 
@@ -170,7 +170,8 @@ git switch --track origin/feat/channel-setup
 
 - [x] 确认团队仓库地址，并配置当前本机 `origin` / `upstream`。
 - [x] 完成本机 SSH 认证并获取远程 `main`，核实远程初始历史。
-- [ ] 审核首次代码导入分支并合入 `main`，配置成员权限及本地 `main` 跟踪关系。
+- [x] 按负责人指示将首次导入代码纳入 `main`。
+- [ ] 配置团队成员权限。
 - [ ] 创建首个团队 PR，核实 CI 实际结果并启用 `main` 保护。
 - [ ] 指定 PR 维护者、发布负责人和交接方式。
 - [ ] 确认 Ubuntu 当前运行版本、配置与数据位置，建立备份和恢复方案。
