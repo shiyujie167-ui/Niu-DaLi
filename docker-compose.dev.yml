@@ -19,59 +19,82 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+      args:
+        GOPROXY: ${GOPROXY:-https://goproxy.cn,direct}
     image: new-api-dev:local
     container_name: new-api-dev
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     volumes:
       - dev_data:/data
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api
-      - REDIS_CONN_STRING=redis://redis
-      - TZ=Asia/Shanghai
-      - BATCH_UPDATE_ENABLED=true
+      SQL_DSN: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-niu-dali-local-only}@postgres:5432/new-api
+      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD:-niu-dali-local-only}@redis:6379/0
+      SESSION_SECRET: ${SESSION_SECRET:-niu-dali-local-session-secret-change-before-production}
+      SYSTEM_NAME: ${SYSTEM_NAME:-大力牛}
+      SYSTEM_LOGO: ${SYSTEM_LOGO:-/niu-dali-icon.png}
+      SYSTEM_FOOTER: ${SYSTEM_FOOTER:-大力牛 · Niu Dali Token Service · Powered by New API}
+      TZ: ${TZ:-Asia/Shanghai}
+      BATCH_UPDATE_ENABLED: ${BATCH_UPDATE_ENABLED:-true}
       # Local HTTP dev mode: keep Secure=false and leave TRUSTED_URL unset. This disables the refresh/logout OriginGuard so the :5173 -> :3000 dev proxy works.
-      - SESSION_COOKIE_SECURE=false
+      SESSION_COOKIE_SECURE: "false"
       # For HTTPS only: set Secure=true and list every exact trusted HTTPS browser Origin. This does not configure relay CORS.
-      # - SESSION_COOKIE_SECURE=true
-      # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com
+      # SESSION_COOKIE_SECURE: "true"
+      # SESSION_COOKIE_TRUSTED_URL: https://example.com,https://admin.example.com
     depends_on:
       redis:
-        condition: service_started
+        condition: service_healthy
       postgres:
         condition: service_healthy
     networks:
       - dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -Eq '\"success\"[[:space:]]*:[[:space:]]*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine
     container_name: new-api-dev-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-niu-dali-local-only}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-niu-dali-local-only}
+    volumes:
+      - dev_redis_data:/data
     networks:
       - dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15.10-alpine
     container_name: new-api-dev-pg
     restart: unless-stopped
     environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-niu-dali-local-only}
       POSTGRES_DB: new-api
     volumes:
       - dev_pg_data:/var/lib/postgresql/data
     networks:
       - dev-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d new-api"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
 volumes:
   dev_data:
   dev_pg_data:
+  dev_redis_data:
 
 networks:
   dev-network:

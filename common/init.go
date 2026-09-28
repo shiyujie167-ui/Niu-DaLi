@@ -36,6 +36,7 @@ func InitEnv() {
 	if envVersion != "" {
 		Version = envVersion
 	}
+	initRuntimeBrandDefaults()
 
 	if *PrintVersion {
 		fmt.Println(Version)
@@ -136,6 +137,12 @@ func InitEnv() {
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
+}
+
+func initRuntimeBrandDefaults() {
+	SystemName = GetEnvOrDefaultString("SYSTEM_NAME", SystemName)
+	Logo = GetEnvOrDefaultString("SYSTEM_LOGO", Logo)
+	Footer = GetEnvOrDefaultString("SYSTEM_FOOTER", Footer)
 }
 
 func initUserSessionSettings() {

@@ -16,228 +16,137 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { CherryStudio } from '@lobehub/icons'
+import {
+  ArrowRight01Icon,
+  BookOpen01Icon,
+  Wallet01Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
-
-import { HeroTerminalDemo } from '../hero-terminal-demo'
+import { useSystemConfig } from '@/hooks/use-system-config'
 
 interface HeroProps {
   className?: string
   isAuthenticated?: boolean
 }
 
-// Stylized three-dots indicator representing "More"
-const MoreIcon = () => (
-  <svg
-    className='text-muted-foreground/60 group-hover:text-foreground size-6 shrink-0 transition-colors'
-    viewBox='0 0 24 24'
-    fill='none'
-    xmlns='http://www.w3.org/2000/svg'
-  >
-    <circle cx='6' cy='12' r='2' fill='currentColor' />
-    <circle cx='12' cy='12' r='2' fill='currentColor' />
-    <circle cx='18' cy='12' r='2' fill='currentColor' />
-  </svg>
-)
+const MODEL_SIGNALS = ['OpenAI', 'Claude', 'Gemini', 'DeepSeek'] as const
+const GRID_CELLS = Array.from({ length: 20 }, (_, index) => index)
 
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
+  const { systemName, logo } = useSystemConfig()
   const { status } = useStatus()
   const docsUrl =
     (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
-
-  const renderDocsButton = () => {
-    const isExternal = docsUrl.startsWith('http')
-    if (isExternal) {
-      return (
-        <Button
-          variant='outline'
-          className='group border-border/50 hover:border-border hover:bg-muted/50 inline-flex h-11 items-center gap-1.5 rounded-lg px-5 text-sm font-medium'
-          render={
-            <a href={docsUrl} target='_blank' rel='noopener noreferrer' />
-          }
-        >
-          <BookOpen className='text-muted-foreground/80 group-hover:text-foreground size-4 transition-colors duration-200' />
-          <span>{t('Docs')}</span>
-        </Button>
-      )
-    }
-    return (
-      <Button
-        variant='outline'
-        className='group border-border/50 hover:border-border hover:bg-muted/50 inline-flex h-11 items-center gap-1.5 rounded-lg px-5 text-sm font-medium'
-        render={<Link to={docsUrl} />}
-      >
-        <BookOpen className='text-muted-foreground/80 group-hover:text-foreground size-4 transition-colors duration-200' />
-        <span>{t('Docs')}</span>
-      </Button>
-    )
-  }
+  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-up'
+  const primaryLabel = props.isAuthenticated
+    ? t('Open wallet')
+    : t('Create account')
 
   return (
-    <section className='relative z-10 overflow-hidden px-6 pt-24 pb-16 md:pt-32 md:pb-24 lg:pt-36 lg:pb-28'>
-      {/* Radial gradient background */}
-      <div
-        aria-hidden
-        className='pointer-events-none absolute inset-0 -z-10 opacity-25 dark:opacity-[0.12]'
-        style={{
-          background: [
-            'radial-gradient(ellipse 60% 50% at 20% 20%, oklch(0.72 0.18 250 / 80%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 50% 40% at 80% 15%, oklch(0.65 0.15 200 / 60%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 35% at 40% 80%, oklch(0.70 0.12 280 / 40%) 0%, transparent 70%)',
-          ].join(', '),
-        }}
-      />
-      {/* Grid pattern */}
-      <div
-        aria-hidden
-        className='absolute inset-0 -z-10 bg-[linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_30%,black_20%,transparent_100%)] bg-[size:4rem_4rem] opacity-[0.08]'
-      />
+    <section className='niu-dali-hero relative isolate min-h-[min(48rem,calc(100svh-5rem))] overflow-hidden px-5 pt-24 pb-16 sm:px-8 md:pt-28 lg:px-10'>
+      <div aria-hidden='true' className='absolute inset-0 overflow-hidden'>
+        <div className='absolute inset-y-0 right-0 grid w-full grid-cols-4 grid-rows-5 opacity-35 sm:w-4/5 lg:w-[58%]'>
+          {GRID_CELLS.map((cell) => (
+            <span className='niu-dali-grid-cell' key={cell} />
+          ))}
+        </div>
 
-      <div className='mx-auto grid max-w-6xl grid-cols-1 items-start gap-12 lg:grid-cols-12 lg:gap-8'>
-        {/* Left Column: Title, description, action buttons and application support */}
-        <div className='flex flex-col items-start text-left lg:col-span-6'>
-          {/* Top Pill Badge */}
-          <div
-            className='landing-animate-fade-up mb-5 inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 px-3 py-1.5 text-[11px] font-medium text-blue-600 opacity-0 shadow-xs dark:border-blue-400/20 dark:bg-blue-400/5 dark:text-blue-400'
-            style={{ animationDelay: '0ms' }}
-          >
-            <span className='relative flex size-1.5'>
-              <span className='absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75' />
-              <span className='relative inline-flex size-1.5 rounded-full bg-blue-500 dark:bg-blue-400' />
-            </span>
-            <span>{t('AI Application Infrastructure Foundation')}</span>
+        <img
+          src={logo}
+          alt=''
+          className='absolute top-1/2 right-[8%] size-64 -translate-y-1/2 opacity-[0.08] sm:size-80 lg:size-[28rem] lg:opacity-[0.16]'
+        />
+
+        <div className='absolute top-[28%] right-[7%] hidden w-72 gap-2 lg:grid'>
+          {MODEL_SIGNALS.map((model, index) => (
+            <div
+              className='niu-dali-signal flex h-11 items-center justify-between border px-3 text-xs'
+              key={model}
+              style={{ animationDelay: `${index * 500}ms` }}
+            >
+              <span className='font-medium'>{model}</span>
+              <span className='flex items-center gap-2 opacity-70'>
+                <span className='niu-dali-status-dot size-1.5 rounded-full' />
+                API
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className='relative z-10 mx-auto flex min-h-[min(38rem,calc(100svh-11rem))] max-w-6xl items-center'>
+        <div className='max-w-2xl'>
+          <div className='niu-dali-kicker mb-8 inline-flex items-center gap-3 border px-3 py-2'>
+            <img src={logo} alt='' className='size-7' />
+            <span className='text-xs font-semibold'>Niu Dali</span>
+            <span
+              aria-hidden='true'
+              className='h-4 w-px bg-current opacity-25'
+            />
+            <span className='text-xs opacity-70'>{t('Token access')}</span>
           </div>
 
-          <h1
-            className='landing-animate-fade-up text-[clamp(2.25rem,4.5vw,3.25rem)] leading-[1.15] font-bold tracking-tight'
-            style={{ animationDelay: '60ms' }}
-          >
-            {t('Unified API Gateway for')}
-            <br />
-            <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-              {t('Vast Range of AI Models')}
-            </span>
+          <p className='niu-dali-eyebrow mb-4 text-sm font-medium'>
+            {t('Token access, made straightforward')}
+          </p>
+          <h1 className='max-w-xl text-5xl leading-none font-semibold text-balance [overflow-wrap:anywhere] sm:text-6xl lg:text-7xl'>
+            {systemName}
           </h1>
-          <p
-            className='landing-animate-fade-up text-muted-foreground/80 mt-5 max-w-xl text-base leading-relaxed opacity-0 md:text-[15px]'
-            style={{ animationDelay: '120ms' }}
-          >
+          <p className='mt-6 max-w-xl text-xl leading-8 font-medium text-balance sm:text-2xl'>
+            {t('One balance for the AI models you use.')}
+          </p>
+          <p className='niu-dali-hero-muted mt-4 max-w-xl text-sm leading-7 sm:text-base'>
             {t(
-              'Access a vast selection of models via a standard, unified API protocol. Power AI applications, manage digital assets, and connect the Future.'
+              'Buy flexible credit, create an API key, and see every request in one place.'
             )}
           </p>
 
-          <div
-            className='landing-animate-fade-up mt-8 flex flex-wrap items-center gap-3 opacity-0'
-            style={{ animationDelay: '180ms' }}
-          >
-            {props.isAuthenticated ? (
-              <>
-                <Button
-                  className='group h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/dashboard' />}
-                >
-                  {t('Go to Dashboard')}
-                  <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
-                </Button>
-                {renderDocsButton()}
-              </>
-            ) : (
-              <>
-                <Button
-                  className='group h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/sign-up' />}
-                >
-                  {t('Get Started')}
-                  <ArrowRight className='ml-1.5 size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
-                </Button>
-                <Button
-                  variant='outline'
-                  className='border-border/50 hover:border-border hover:bg-muted/50 h-11 rounded-lg px-5 text-sm font-medium'
-                  render={<Link to='/pricing' />}
-                >
-                  {t('View Pricing')}
-                </Button>
-                {renderDocsButton()}
-              </>
-            )}
+          <div className='mt-8 flex flex-wrap items-center gap-3'>
+            <Button
+              size='lg'
+              className='niu-dali-primary-action h-11 px-5'
+              render={<Link to={primaryDestination} />}
+            >
+              <HugeiconsIcon icon={Wallet01Icon} data-icon='inline-start' />
+              {primaryLabel}
+              <HugeiconsIcon icon={ArrowRight01Icon} data-icon='inline-end' />
+            </Button>
+            <Button
+              size='lg'
+              variant='outline'
+              className='niu-dali-secondary-action h-11 px-5'
+              render={<Link to='/pricing' />}
+            >
+              {t('View Pricing')}
+            </Button>
+            <Button
+              size='lg'
+              variant='outline'
+              className='niu-dali-secondary-action h-11 px-5'
+              render={
+                docsUrl.startsWith('http') ? (
+                  <a href={docsUrl} target='_blank' rel='noopener noreferrer' />
+                ) : (
+                  <Link to={docsUrl} />
+                )
+              }
+            >
+              <HugeiconsIcon icon={BookOpen01Icon} data-icon='inline-start' />
+              {t('Docs')}
+            </Button>
           </div>
 
-          {/* Supported Apps (参考图二样式，进行卡片化和信息扩充设计，增加视觉高度) */}
-          <div
-            className='landing-animate-fade-up mt-10 w-full max-w-xl opacity-0'
-            style={{ animationDelay: '240ms' }}
-          >
-            <div className='mb-4 flex flex-col gap-1'>
-              <span className='text-muted-foreground/50 text-[10px] font-bold tracking-[0.15em] uppercase'>
-                {t('Supported Applications')}
-              </span>
-              <p className='text-muted-foreground/60 text-xs leading-relaxed'>
-                {t(
-                  'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
-                )}
-              </p>
-            </div>
-            <div className='flex flex-wrap items-center gap-3'>
-              {/* Cherry Studio */}
-              <a
-                href='https://cherry-ai.com'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='group border-border/40 bg-muted/15 text-foreground/80 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-3 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'
-              >
-                <CherryStudio.Color size={24} className='shrink-0' />
-                <span>Cherry Studio</span>
-              </a>
-
-              {/* CC Switch */}
-              <a
-                href='https://ccswitch.io'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='group border-border/40 bg-muted/15 text-foreground/80 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-3 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'
-              >
-                <img
-                  src='https://ccswitch.io/favicon.png'
-                  alt='CC Switch'
-                  className='size-6 shrink-0 rounded-md object-contain'
-                  onError={(e) => {
-                    // Fallback to a styled text avatar if the remote favicon fails to load in sandbox or local environments
-                    e.currentTarget.style.display = 'none'
-                    const fallback = e.currentTarget.nextSibling as HTMLElement
-                    if (fallback) fallback.style.display = 'flex'
-                  }}
-                />
-                <span
-                  style={{ display: 'none' }}
-                  className='size-6 shrink-0 items-center justify-center rounded-md bg-blue-500/10 text-[10px] font-bold text-blue-600 dark:bg-blue-400/10 dark:text-blue-400'
-                >
-                  CC
-                </span>
-                <span>CC Switch</span>
-              </a>
-
-              {/* "更多" */}
-              <div className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex cursor-default items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'>
-                <MoreIcon />
-                <span>{t('More Apps')}</span>
-              </div>
-            </div>
+          <div className='niu-dali-hero-muted mt-10 flex flex-wrap gap-x-6 gap-y-3 text-xs'>
+            <span>{t('Pay as you go')}</span>
+            <span>{t('Clear model pricing')}</span>
+            <span>{t('Request-level usage records')}</span>
           </div>
-        </div>
-
-        {/* Right Column: Hero Terminal API Demo */}
-        <div
-          className='landing-animate-fade-up flex w-full justify-center opacity-0 lg:col-span-6'
-          style={{ animationDelay: '320ms' }}
-        >
-          <HeroTerminalDemo className='mt-8 lg:mt-0' />
         </div>
       </div>
     </section>

@@ -17,18 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  Zap,
-  Shield,
-  Globe,
-  Code,
-  Gauge,
-  DollarSign,
-  Users,
-  HeartHandshake,
-} from 'lucide-react'
+  LinkSquare01Icon,
+  Shield01Icon,
+  Wallet01Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 
 interface FeaturesProps {
   className?: string
@@ -36,202 +40,105 @@ interface FeaturesProps {
 
 export function Features(_props: FeaturesProps) {
   const { t } = useTranslation()
-
   const features = [
     {
-      id: 'fast',
-      num: '01',
-      title: t('Lightning Fast'),
-      desc: t(
-        'Optimized network architecture ensures millisecond response times'
+      id: 'pricing',
+      icon: Wallet01Icon,
+      title: t('Clear before you buy'),
+      description: t(
+        'Compare model access and pricing before you commit balance.'
       ),
-      span: 'md:col-span-2',
-      icon: <Zap className='size-4 text-blue-400' />,
-      visual: (
-        <div className='mt-4 grid grid-cols-3 gap-2'>
-          {['OpenAI', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'Llama'].map(
-            (name) => (
-              <div
-                key={name}
-                className='border-border/30 bg-muted/20 text-muted-foreground flex items-center justify-center rounded-lg border px-3 py-2 text-xs transition-colors duration-300 hover:border-blue-500/30 hover:bg-blue-500/5'
-              >
-                {name}
-              </div>
-            )
-          )}
-        </div>
-      ),
-    },
-    {
-      id: 'secure',
-      num: '02',
-      title: t('Secure & Reliable'),
-      desc: t(
-        'Enterprise-grade security with comprehensive permission management'
-      ),
-      span: 'md:col-span-1',
-      icon: <Shield className='size-4 text-emerald-400' />,
-      visual: (
-        <div className='mt-4 flex items-center justify-center'>
-          <div className='relative'>
-            <div className='flex size-16 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/5'>
-              <Shield
-                className='size-7 text-emerald-500/70'
-                strokeWidth={1.5}
-              />
-            </div>
-            <div className='absolute -top-1 -right-1 flex size-4 items-center justify-center rounded-full bg-emerald-500'>
-              <svg
-                className='size-2.5 text-white'
-                fill='none'
-                viewBox='0 0 24 24'
-                stroke='currentColor'
-                strokeWidth={3}
-              >
-                <path
-                  strokeLinecap='round'
-                  strokeLinejoin='round'
-                  d='m4.5 12.75 6 6 9-13.5'
-                />
-              </svg>
-            </div>
+      preview: (
+        <div className='border-border bg-muted/30 flex items-center justify-between border px-3 py-3'>
+          <div>
+            <p className='text-xs font-medium'>{t('Balance')}</p>
+            <p className='text-muted-foreground mt-1 text-xs'>
+              {t('Ready for API usage')}
+            </p>
           </div>
+          <Badge variant='secondary'>{t('Pay as you go')}</Badge>
         </div>
       ),
     },
     {
-      id: 'global',
-      num: '03',
-      title: t('Global Coverage'),
-      desc: t('Multi-region deployment for stable global access'),
-      span: 'md:col-span-1',
-      icon: <Globe className='size-4 text-violet-400' />,
-      visual: (
-        <div className='mt-4 space-y-2'>
-          {[t('Load Balancing'), t('Rate Limiting'), t('Cost Tracking')].map(
-            (step, i) => (
-              <div key={step} className='flex items-center gap-2'>
-                <div
-                  className={`flex size-6 items-center justify-center rounded-full text-[10px] font-bold ${
-                    i === 1
-                      ? 'border border-blue-500/30 bg-blue-500/20 text-blue-500'
-                      : 'border-border/40 bg-muted text-muted-foreground border'
-                  }`}
-                >
-                  {i + 1}
-                </div>
-                <div className='bg-border/40 h-px flex-1' />
-                <span className='text-muted-foreground text-xs'>{step}</span>
-              </div>
-            )
-          )}
-        </div>
+      id: 'routes',
+      icon: LinkSquare01Icon,
+      title: t('One key, more models'),
+      description: t(
+        'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
       ),
-    },
-    {
-      id: 'developer',
-      num: '04',
-      title: t('Developer Friendly'),
-      desc: t('Compatible API routes for common AI application workflows'),
-      span: 'md:col-span-2',
-      icon: <Code className='size-4 text-amber-400' />,
-      visual: (
-        <div className='mt-4 flex items-center gap-3'>
-          <div className='flex -space-x-2'>
-            {['API', 'SDK', 'CLI', 'Docs'].map((n) => (
-              <div
-                key={n}
-                className='border-background from-muted to-muted/60 text-muted-foreground flex size-8 items-center justify-center rounded-full border-2 bg-gradient-to-br text-[9px] font-bold'
-              >
-                {n}
-              </div>
+      preview: (
+        <div className='flex flex-col gap-3'>
+          <div className='border-border bg-muted/30 border px-3 py-2.5 font-mono text-xs'>
+            nd_live_••••••••••••
+          </div>
+          <div className='flex flex-wrap gap-2'>
+            {['OpenAI', 'Claude', 'Gemini', 'DeepSeek'].map((model) => (
+              <Badge key={model} variant='outline'>
+                {model}
+              </Badge>
             ))}
           </div>
-          <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
-            <Code className='size-3.5 text-blue-500' />
-            {t('Multi-protocol Compatible')}
-          </div>
         </div>
       ),
     },
-  ]
-
-  const additionalFeatures = [
     {
-      icon: <Gauge className='size-5' strokeWidth={1.5} />,
-      title: t('High Performance'),
-      desc: t('Support for high concurrency with automatic load balancing'),
-    },
-    {
-      icon: <DollarSign className='size-5' strokeWidth={1.5} />,
-      title: t('Transparent Billing'),
-      desc: t('Pay-as-you-go with real-time usage monitoring'),
-    },
-    {
-      icon: <Users className='size-5' strokeWidth={1.5} />,
-      title: t('Team Collaboration'),
-      desc: t('Multi-user management with flexible permission allocation'),
-    },
-    {
-      icon: <HeartHandshake className='size-5' strokeWidth={1.5} />,
-      title: t('Open Source'),
-      desc: t('Community driven, self-hosted, and extensible'),
+      id: 'records',
+      icon: Shield01Icon,
+      title: t('Usage you can audit'),
+      description: t(
+        'See token usage, cost, and remaining balance in one console.'
+      ),
+      preview: (
+        <div className='border-border divide-border grid grid-cols-2 divide-x border'>
+          <div className='px-3 py-3'>
+            <p className='text-xs font-medium'>{t('Usage')}</p>
+            <p className='text-muted-foreground mt-1 text-xs'>Token</p>
+          </div>
+          <div className='px-3 py-3'>
+            <p className='text-xs font-medium'>{t('Request records')}</p>
+            <p className='text-muted-foreground mt-1 text-xs'>API</p>
+          </div>
+        </div>
+      ),
     },
   ]
 
   return (
-    <section className='relative z-10 px-6 py-24 md:py-32'>
+    <section className='bg-background px-5 py-20 sm:px-8 md:py-28 lg:px-10'>
       <div className='mx-auto max-w-6xl'>
-        <AnimateInView className='mb-16 max-w-lg'>
-          <p className='text-muted-foreground mb-3 text-xs font-medium tracking-widest uppercase'>
-            {t('Core Features')}
-          </p>
-          <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-3xl'>
-            {t('Built for developers,')}
-            <br />
-            {t('designed for scale')}
+        <AnimateInView className='max-w-2xl'>
+          <p className='text-primary text-sm font-medium'>Niu Dali</p>
+          <h2 className='mt-3 text-3xl leading-tight font-semibold text-balance md:text-4xl'>
+            {t('Built for buying, using, and understanding tokens')}
           </h2>
+          <p className='text-muted-foreground mt-4 max-w-xl text-sm leading-7 sm:text-base'>
+            {t(
+              'A calmer way to manage AI spend from the first top-up to the latest request.'
+            )}
+          </p>
         </AnimateInView>
 
-        {/* Bento grid */}
-        <div className='border-border/40 bg-border/40 grid gap-px overflow-hidden rounded-xl border md:grid-cols-3'>
-          {features.map((f, i) => (
-            <AnimateInView
-              key={f.id}
-              delay={i * 100}
-              animation='scale-in'
-              className={`bg-background group hover:bg-muted/20 p-7 transition-colors duration-300 md:p-8 ${f.span}`}
-            >
-              <div className='mb-3 flex items-center gap-3'>
-                <span className='border-border/40 bg-muted text-muted-foreground flex size-7 items-center justify-center rounded-md border text-[10px] font-semibold tabular-nums'>
-                  {f.num}
-                </span>
-                <h3 className='text-sm font-semibold'>{f.title}</h3>
-              </div>
-              <p className='text-muted-foreground text-sm leading-relaxed'>
-                {f.desc}
-              </p>
-              {f.visual}
-            </AnimateInView>
-          ))}
-        </div>
-
-        {/* Additional features row */}
-        <div className='mt-12 grid grid-cols-2 gap-8 md:grid-cols-4 md:gap-12'>
-          {additionalFeatures.map((f, i) => (
-            <AnimateInView
-              key={f.title}
-              delay={i * 100}
-              animation='fade-up'
-              className='flex flex-col items-center text-center'
-            >
-              <div className='text-muted-foreground border-border/50 bg-muted/30 group-hover:text-foreground mb-3 flex size-12 items-center justify-center rounded-xl border transition-colors'>
-                {f.icon}
-              </div>
-              <h3 className='mb-1.5 text-sm font-semibold'>{f.title}</h3>
-              <p className='text-muted-foreground max-w-[200px] text-xs leading-relaxed'>
-                {f.desc}
-              </p>
+        <div className='mt-12 grid gap-4 lg:grid-cols-3'>
+          {features.map((feature, index) => (
+            <AnimateInView delay={index * 90} key={feature.id}>
+              <Card className='h-full rounded-lg'>
+                <CardHeader>
+                  <div className='bg-primary/10 text-primary mb-3 flex size-9 items-center justify-center rounded-md'>
+                    <HugeiconsIcon
+                      icon={feature.icon}
+                      className='size-5'
+                      strokeWidth={1.8}
+                      aria-hidden='true'
+                    />
+                  </div>
+                  <CardTitle className='text-lg'>{feature.title}</CardTitle>
+                  <CardDescription className='min-h-12 leading-6'>
+                    {feature.description}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>{feature.preview}</CardContent>
+              </Card>
             </AnimateInView>
           ))}
         </div>
