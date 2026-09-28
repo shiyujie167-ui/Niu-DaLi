@@ -29,6 +29,11 @@ import { useAuthStore } from '@/stores/auth-store'
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
 import { useHomePageContent } from './hooks'
 
+const NIU_DALI_HEADER_PROPS = {
+  className: 'niu-dali-header-theme',
+  darkSurfaceUntilScrolled: true,
+} as const
+
 export function Home() {
   const { i18n, t } = useTranslation()
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -121,13 +126,17 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
+    <PublicLayout showMainContainer={false} headerProps={NIU_DALI_HEADER_PROPS}>
+      <div className='niu-dali-home bg-background text-foreground min-h-svh'>
+        <main>
+          <Hero isAuthenticated={isAuthenticated} />
+          <Stats />
+          <Features />
+          <HowItWorks />
+          <CTA isAuthenticated={isAuthenticated} />
+        </main>
+        <Footer />
+      </div>
     </PublicLayout>
   )
 }

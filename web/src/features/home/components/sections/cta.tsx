@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ArrowRight01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
 import { Button } from '@/components/ui/button'
+import { useSystemConfig } from '@/hooks/use-system-config'
 
 interface CTAProps {
   className?: string
@@ -30,49 +32,46 @@ interface CTAProps {
 
 export function CTA(props: CTAProps) {
   const { t } = useTranslation()
-
-  if (props.isAuthenticated) {
-    return null
-  }
+  const { logo } = useSystemConfig()
+  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-up'
+  const primaryLabel = props.isAuthenticated
+    ? t('Open wallet')
+    : t('Get Started')
 
   return (
-    <section className='relative z-10 overflow-hidden px-6 py-24 md:py-32'>
-      {/* Gradient mesh background */}
-      <div
-        aria-hidden
-        className='absolute inset-0 -z-10 opacity-20 dark:opacity-[0.08]'
-        style={{
-          background: [
-            'radial-gradient(ellipse 50% 50% at 30% 50%, oklch(0.7 0.15 250 / 70%) 0%, transparent 70%)',
-            'radial-gradient(ellipse 40% 40% at 70% 40%, oklch(0.65 0.12 200 / 50%) 0%, transparent 70%)',
-          ].join(', '),
-        }}
+    <section className='niu-dali-cta relative isolate overflow-hidden px-5 py-20 sm:px-8 md:py-24 lg:px-10'>
+      <img
+        src={logo}
+        alt=''
+        aria-hidden='true'
+        className='absolute top-1/2 right-[8%] -z-10 size-64 -translate-y-1/2 opacity-[0.08] md:size-80'
       />
+      <AnimateInView className='mx-auto flex max-w-6xl flex-col justify-between gap-10 md:flex-row md:items-end'>
+        <div className='max-w-2xl'>
+          <p className='niu-dali-eyebrow text-sm font-medium'>Niu Dali</p>
+          <h2 className='mt-4 text-3xl leading-tight font-semibold text-balance md:text-5xl'>
+            {t('Ready for your next request?')}
+          </h2>
+          <p className='niu-dali-hero-muted mt-4 max-w-xl text-sm leading-7 sm:text-base'>
+            {t(
+              'Start small, validate your workflow, and scale when the numbers make sense.'
+            )}
+          </p>
+        </div>
 
-      <AnimateInView
-        className='mx-auto max-w-2xl text-center'
-        animation='scale-in'
-      >
-        <h2 className='text-2xl leading-tight font-bold tracking-tight md:text-4xl'>
-          {t('Ready to simplify')}
-          <br />
-          <span className='bg-gradient-to-r from-blue-400 via-violet-400 to-purple-500 bg-clip-text text-transparent'>
-            {t('your AI integration?')}
-          </span>
-        </h2>
-        <p className='text-muted-foreground/80 mx-auto mt-5 max-w-md text-sm leading-relaxed md:text-base'>
-          {t(
-            'Deploy your own gateway and start routing requests through your configured upstream services.'
-          )}
-        </p>
-        <div className='mt-8 flex items-center justify-center gap-3'>
-          <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
-            {t('Get Started')}
-            <ArrowRight className='ml-1 size-3.5 transition-transform duration-200 group-hover:translate-x-0.5' />
+        <div className='flex shrink-0 flex-wrap gap-3'>
+          <Button
+            size='lg'
+            className='niu-dali-primary-action h-11 px-5'
+            render={<Link to={primaryDestination} />}
+          >
+            {primaryLabel}
+            <HugeiconsIcon icon={ArrowRight01Icon} data-icon='inline-end' />
           </Button>
           <Button
+            size='lg'
             variant='outline'
-            className='border-border/50 hover:border-border hover:bg-muted/50 rounded-lg'
+            className='niu-dali-secondary-action h-11 px-5'
             render={<Link to='/pricing' />}
           >
             {t('View Pricing')}

@@ -59,6 +59,7 @@ export interface PublicHeaderProps {
   showNavigation?: boolean
   showAuthButtons?: boolean
   showNotifications?: boolean
+  darkSurfaceUntilScrolled?: boolean
   className?: string
 }
 
@@ -98,6 +99,8 @@ export function PublicHeader(props: PublicHeaderProps) {
   const isAuthenticated = !!user
   const displaySiteName = customSiteName || systemName
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
+  const useDarkSurface =
+    props.darkSurfaceUntilScrolled && !scrolled && !mobileOpen
 
   let logoContent: ReactNode = (
     <HeaderLogo
@@ -198,7 +201,7 @@ export function PublicHeader(props: PublicHeaderProps) {
   )
 
   return (
-    <>
+    <div className={props.className}>
       <header className='pointer-events-none fixed inset-x-0 top-0 z-50'>
         <div
           className={cn(
@@ -209,6 +212,7 @@ export function PublicHeader(props: PublicHeaderProps) {
           <nav
             className={cn(
               'flex items-center justify-between gap-2 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
+              useDarkSurface && 'public-header-dark-surface',
               scrolled
                 ? 'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]'
                 : 'h-16 px-2'
@@ -323,6 +327,8 @@ export function PublicHeader(props: PublicHeaderProps) {
                 className='size-9'
                 onClick={() => setMobileOpen((v) => !v)}
                 aria-label={t('Toggle navigation menu')}
+                aria-expanded={mobileOpen}
+                aria-controls='public-mobile-navigation'
               >
                 <div className='relative size-4'>
                   <span
@@ -352,6 +358,9 @@ export function PublicHeader(props: PublicHeaderProps) {
 
       {/* Mobile full-screen overlay */}
       <div
+        id='public-mobile-navigation'
+        aria-hidden={!mobileOpen}
+        inert={!mobileOpen}
         className={cn(
           'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] lg:pointer-events-none lg:hidden',
           mobileOpen
@@ -456,6 +465,6 @@ export function PublicHeader(props: PublicHeaderProps) {
           })}
         </div>
       </Dialog>
-    </>
+    </div>
   )
 }

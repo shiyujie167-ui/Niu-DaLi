@@ -745,3 +745,110 @@ For commercial licensing, please contact support@quantumnous.com
     display: none;
   }
 }
+
+/* Niu Dali storefront: dark violet tokens scoped away from the console. */
+.niu-dali-home,
+.public-header-dark-surface {
+  --background: oklch(0.114 0.02 291.5);
+  --foreground: oklch(0.975 0.013 295.4);
+  --card: oklch(0.196 0.036 290.4);
+  --card-foreground: oklch(0.975 0.013 295.4);
+  --popover: oklch(0.169 0.027 290.3);
+  --popover-foreground: oklch(0.975 0.013 295.4);
+  --primary: oklch(0.709 0.159 293.6);
+  --primary-foreground: oklch(0.114 0.02 291.5);
+  --secondary: oklch(0.247 0.041 291.4);
+  --secondary-foreground: oklch(0.94 0.018 295);
+  --muted: oklch(0.247 0.041 291.4);
+  --muted-foreground: oklch(0.729 0.036 298.3);
+  --accent: oklch(0.247 0.06 291.4);
+  --accent-foreground: oklch(0.975 0.013 295.4);
+  --border: oklch(0.291 0.047 292 / 72%);
+  --input: oklch(0.518 0.063 295.6);
+  --ring: oklch(0.709 0.159 293.6);
+  color: var(--foreground);
+}
+
+.niu-dali-home {
+  --niu-hero: var(--background);
+  --niu-hero-foreground: var(--foreground);
+  --niu-hero-muted: var(--muted-foreground);
+  --niu-action: oklch(0.541 0.247 293);
+  --niu-action-hover: oklch(0.49 0.23 293);
+  --niu-cyan: oklch(0.76 0.14 220);
+  --niu-control-border: oklch(0.518 0.063 295.6);
+  --niu-line: var(--border);
+}
+
+.niu-dali-hero,
+.niu-dali-cta {
+  background-color: var(--niu-hero);
+  color: var(--niu-hero-foreground);
+}
+
+.niu-dali-grid-cell {
+  border-right: 1px solid var(--niu-line);
+  border-bottom: 1px solid var(--niu-line);
+}
+
+.niu-dali-kicker,
+.niu-dali-signal {
+  border-color: var(--niu-line);
+  background-color: oklch(0.196 0.036 290.4 / 88%);
+}
+
+.niu-dali-eyebrow {
+  color: var(--primary);
+}
+
+.niu-dali-hero-muted {
+  color: var(--niu-hero-muted);
+}
+
+.niu-dali-status-dot {
+  background-color: var(--niu-cyan);
+  box-shadow: 0 0 0 4px oklch(0.76 0.14 220 / 12%);
+}
+
+.niu-dali-primary-action {
+  border-color: var(--niu-action);
+  background-color: var(--niu-action);
+  color: var(--foreground);
+}
+
+.niu-dali-primary-action:hover {
+  border-color: var(--niu-action-hover);
+  background-color: var(--niu-action-hover);
+}
+
+.niu-dali-secondary-action {
+  border-color: var(--niu-control-border);
+  background-color: transparent;
+  color: var(--niu-hero-foreground);
+}
+
+.niu-dali-secondary-action:hover {
+  border-color: var(--primary);
+  background-color: var(--secondary);
+  color: var(--niu-hero-foreground);
+}
+
+@keyframes niu-dali-signal-breathe {
+  0%,
+  100% {
+    opacity: 0.68;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.niu-dali-signal {
+  animation: niu-dali-signal-breathe 6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .niu-dali-signal {
+    animation: none;
+  }
+}
