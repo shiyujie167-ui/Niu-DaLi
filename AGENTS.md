@@ -168,6 +168,19 @@ Tasks that touch none of these (for example unrelated frontend work, authenticat
 
 ### Project Governance
 
+#### Team Git and Production Workflow
+
+Before branch creation, commits, handoff, merges, upstream synchronization, or production release work, read [TEAM_WORKFLOW.md](TEAM_WORKFLOW.md) and follow its workflow.
+
+- The team shares one Git repository, with independent developer checkouts and short-lived task branches. `main` is the integration branch; do not directly commit or push task changes to it. Agent-created branches default to `codex/<task>`.
+- `origin` must be verified as the team's repository before any push or PR; `upstream` is the official source. Do not infer ownership from the existing remote name. Do not change remotes without the actual team repository URL and authorization to configure it.
+- Inspect branch, working-tree changes, and remotes before starting. Preserve existing work; do not automatically stash, discard, or mix unrelated changes. Stage explicit paths and review the staged diff before committing.
+- Use one task branch and PR per focused change. For asynchronous handoff, push the work when authorized and record the branch, commit, completed work, remaining work, validation, and next owner in the PR. Do not force-push a shared branch or rewrite another contributor's commits.
+- Integrate through reviewed PRs with required checks. Existing PR template selection, attribution, and validation rules below still apply. Do not merge or deploy solely because checks pass; follow the user's authorization and the designated maintainer's release decision.
+- Ubuntu is the production runtime, not a shared development checkout. Deploy a reviewed commit from team `main` with a traceable application image. Merging, pulling source, and deploying are separate actions; the stock Compose file uses an official image and does not deploy local source changes.
+- Keep development and production databases, Redis, credentials, and persistent data separate. Never commit or include server login files, private keys, real environment files, or database backups in Docker build contexts. In particular, `/服务器/` is local-only.
+- Production releases require a recorded target commit, previous image, backup and database compatibility assessment, validation, and one designated release operator at a time. Never automatically roll back application code across an incompatible schema migration or run `docker compose down -v` on production.
+
 **Protected project information:** The following project-related information is strictly protected and MUST NOT be modified, deleted, replaced, or removed under any circumstances:
 
 - Any references, mentions, branding, metadata, or attributions related to **nеw-аρi** (the project name/identity)

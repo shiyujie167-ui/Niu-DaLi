@@ -10,3 +10,13 @@ docs
 /web/node_modules
 /web/dist
 !THIRD-PARTY-LICENSES.md
+
+# Keep runtime credentials out of Docker build contexts.
+.env
+.env.*
+!.env.example
+local.env
+local.env.*
+
+# Local server access files must never enter image build contexts.
+/服务器/
