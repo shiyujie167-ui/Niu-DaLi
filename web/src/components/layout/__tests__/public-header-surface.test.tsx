@@ -61,7 +61,7 @@ function renderHeader() {
     component: () => (
       <PublicHeader
         className='niu-dali-header-theme'
-        darkSurfaceUntilScrolled
+        heroSurfaceUntilScrolled
         navLinks={[]}
         showAuthButtons={false}
         showLanguageSwitcher={false}
@@ -87,14 +87,14 @@ beforeEach(() => {
   })
 })
 
-describe('PublicHeader dark surface', () => {
-  it('uses the dark hero surface at the top of the page', async () => {
+describe('PublicHeader hero surface', () => {
+  it('uses the hero surface at the top of the page', async () => {
     renderHeader()
 
     const header = await screen.findByRole('banner')
     const navigation = within(header).getByRole('navigation')
     expect(header.parentElement).toHaveClass('niu-dali-header-theme')
-    expect(navigation).toHaveClass('public-header-dark-surface')
+    expect(navigation).toHaveClass('public-header-hero-surface')
   })
 
   it('returns to the normal surface after the page is scrolled', async () => {
@@ -109,7 +109,7 @@ describe('PublicHeader dark surface', () => {
     })
     fireEvent.scroll(window)
 
-    expect(navigation).not.toHaveClass('public-header-dark-surface')
+    expect(navigation).not.toHaveClass('public-header-hero-surface')
   })
 
   it('returns to the normal surface while the mobile menu is open', async () => {
@@ -122,12 +122,12 @@ describe('PublicHeader dark surface', () => {
       name: 'Toggle navigation menu',
     })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(navigation).toHaveClass('public-header-dark-surface')
+    expect(navigation).toHaveClass('public-header-hero-surface')
 
     await user.click(toggle)
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(navigation).not.toHaveClass('public-header-dark-surface')
+    expect(navigation).not.toHaveClass('public-header-hero-surface')
   })
 
   it('keeps the closed mobile navigation out of keyboard focus order', async () => {

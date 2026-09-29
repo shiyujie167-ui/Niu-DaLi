@@ -59,7 +59,8 @@ export interface PublicHeaderProps {
   showNavigation?: boolean
   showAuthButtons?: boolean
   showNotifications?: boolean
-  darkSurfaceUntilScrolled?: boolean
+  /** Blend into the page hero (its light or dark palette) until scrolled. */
+  heroSurfaceUntilScrolled?: boolean
   className?: string
 }
 
@@ -99,8 +100,8 @@ export function PublicHeader(props: PublicHeaderProps) {
   const isAuthenticated = !!user
   const displaySiteName = customSiteName || systemName
   const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
-  const useDarkSurface =
-    props.darkSurfaceUntilScrolled && !scrolled && !mobileOpen
+  const useHeroSurface =
+    props.heroSurfaceUntilScrolled && !scrolled && !mobileOpen
 
   let logoContent: ReactNode = (
     <HeaderLogo
@@ -212,7 +213,7 @@ export function PublicHeader(props: PublicHeaderProps) {
           <nav
             className={cn(
               'flex items-center justify-between gap-2 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
-              useDarkSurface && 'public-header-dark-surface',
+              useHeroSurface && 'public-header-hero-surface',
               scrolled
                 ? 'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]'
                 : 'h-16 px-2'
