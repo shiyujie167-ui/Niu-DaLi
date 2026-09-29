@@ -1,0 +1,98 @@
+web/src/i18n/locales/vi.json
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6678,6716
+web/src/i18n/locales/fr.json
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6678,6716
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+electron/package.json
+  s_e7ca0af6cb874b::t_3bcfa374616800 4
+web/src/i18n/locales/ru.json
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6678,6716
+web/src/i18n/locales/zh.json
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6295,6678,6716
+web/src/i18n/locales/en.json
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6678,6716
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+electron/main.js
+  s_e7ca0af6cb874b::t_b9eb3527a20046 30
+  s_e7ca0af6cb874b::t_c0269d94064e1c 441
+  s_e7ca0af6cb874b::t_0b2d21cd2ed3aa 77
+  s_e7ca0af6cb874b::t_b41be02ef444a6 13-14
+  s_e7ca0af6cb874b::t_45cceb628e282d 88
+  s_e7ca0af6cb874b::t_c7c7b934430b49 402
+  s_e7ca0af6cb874b::t_5d43d118184fea 463
+web/src/features/channels/components/drawers/channel-provider-picker.tsx
+  s_e7ca0af6cb874b::t_637648abb46a2e 41,74
+  s_e7ca0af6cb874b::t_9560592165506f 173
+  s_e7ca0af6cb874b::t_5d6c882e14718a 195
+controller/topup_waffo.go
+  s_e7ca0af6cb874b::t_693bf0816b34de 66
+web/src/features/channels/components/__tests__/provider-selection.test.tsx
+  s_e7ca0af6cb874b::t_67d3a66a4192ad 731
+  s_e7ca0af6cb874b::t_493fa7b621cff3 704-707
+  s_e7ca0af6cb874b::t_8fd0b93fa4fe24 23,26
+web/src/features/chat/lib/__tests__/chat-links.test.ts
+  s_e7ca0af6cb874b::t_e3c8d9e277efcf 1-44
+web/src/features/system-settings/general/system-info-section.tsx
+  s_e7ca0af6cb874b::t_637648abb46a2e 36,81
+  s_e7ca0af6cb874b::t_3c0371229a7276 35
+  s_e7ca0af6cb874b::t_bfcc77cce4bfa1 318
+  s_e7ca0af6cb874b::t_9f1beade08e6c2 317,319
+  s_e7ca0af6cb874b::t_bf23d2bb02c108 169
+web/src/features/home/__tests__/storefront.test.tsx
+  s_e7ca0af6cb874b::t_5f755a2d038e87 32
+  s_e7ca0af6cb874b::t_865bd0122b80fc 48
+  s_e7ca0af6cb874b::t_e80b429ec13ed1 88-97
+web/src/features/channels/constants.ts
+  s_e7ca0af6cb874b::t_106147d46e83af 170
+web/src/features/system-settings/site/index.tsx
+  s_e7ca0af6cb874b::t_61e462898d6ab1 19-20
+  s_e7ca0af6cb874b::t_04d2b75ae26385 31
+web/src/features/chat/lib/chat-links.ts
+  s_e7ca0af6cb874b::t_02b299259b4fa6 196
+  s_e7ca0af6cb874b::t_7e0b4635f46410 20
+common/constants.go
+  s_e7ca0af6cb874b::t_46300923db15d7 15-18
+web/src/i18n/locales/ja.json
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6678,6716
+web/src/i18n/locales/zh-TW.json
+  s_e7ca0af6cb874b::t_02b5f93389c4a0 1613,1947,3627,3629,6295,6678,6716
+  s_e7ca0af6cb874b::t_dba4c65f2c1e53 5652
+web/src/features/home/components/sections/features.tsx
+  s_e7ca0af6cb874b::t_e1933fab988c7b 36
+  s_e7ca0af6cb874b::t_76b636b421252a 44
+  s_e7ca0af6cb874b::t_8a502a5e77f641 70-71
+common/init_test.go
+  s_e7ca0af6cb874b::t_a9c120ddbdfe3b 41,50
+web/src/features/system-settings/auth/passkey-section.tsx
+  s_e7ca0af6cb874b::t_62ff61010f4d5a 374-376
+  s_e7ca0af6cb874b::t_637648abb46a2e 53,175
+web/src/i18n/static-keys.ts
+  s_e7ca0af6cb874b::t_e39a5bd74c53d3 82
+web/src/features/channels/components/drawers/channel-mutate-drawer.tsx
+  s_e7ca0af6cb874b::t_25cf97a6407ad9 1129-1130
+  s_e7ca0af6cb874b::t_637648abb46a2e 129,409
+  s_e7ca0af6cb874b::t_f8bdbf42adbee6 4113-4114
+web/src/features/system-settings/integrations/email-settings-section.tsx
+  s_e7ca0af6cb874b::t_aa9fd88d38ab64 375-377
+  s_e7ca0af6cb874b::t_637648abb46a2e 37,91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.45-trip",
+  "base_commit_sha": "db04e2a1595befe4734c12df50f6a4725ced887c",
+  "prompts": {},
+  "sessions": {
+    "s_e7ca0af6cb874b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ad85d01c-e5f6-4e97-b9c9-62041ad61029",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "leileihuang <leileihuang@trip.com>"
+    }
+  }
+}
