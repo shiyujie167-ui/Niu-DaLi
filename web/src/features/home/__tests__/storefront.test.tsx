@@ -29,7 +29,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
-import { CTA, Hero } from '../components'
+import { CTA, Features, Hero } from '../components'
 
 function renderStorefront(
   isAuthenticated: boolean,
@@ -45,6 +45,7 @@ function renderStorefront(
     component: () => (
       <>
         <Hero isAuthenticated={isAuthenticated} />
+        <Features />
         <CTA isAuthenticated={isAuthenticated} />
       </>
     ),
@@ -82,6 +83,16 @@ describe('Niu Dali storefront primary action', () => {
         name: 'NiuDaliTokenAccessForEverySupportedModel',
       })
     ).toHaveClass('[overflow-wrap:anywhere]')
+  })
+
+  it('names the configured site in the multi-protocol feature card', async () => {
+    renderStorefront(false)
+
+    expect(
+      await screen.findByText(
+        'Supports one-click configuration and perfectly adapts to 大力牛 multi-protocol configuration.'
+      )
+    ).toBeInTheDocument()
   })
 
   it('sends a guest to account creation', async () => {

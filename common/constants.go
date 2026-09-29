@@ -12,7 +12,10 @@ import (
 
 var StartTime = time.Now().Unix() // unit: second
 var Version = "v0.0.0"            // this hard coding will be replaced automatically when building, no need to manually change
-var SystemName = "New API"
+// DefaultSystemName is the site name shown until SYSTEM_NAME or the SystemName option overrides it.
+const DefaultSystemName = "大力牛"
+
+var SystemName = DefaultSystemName
 var Footer = ""
 var Logo = ""
 var TopUpLink = ""

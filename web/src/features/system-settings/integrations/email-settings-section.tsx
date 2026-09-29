@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   SettingsForm,
@@ -87,6 +88,7 @@ export function EmailSettingsSection({
   defaultValues,
 }: EmailSettingsSectionProps) {
   const { t } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const updateOption = useUpdateOption()
   const emailSchema = createEmailSchema(t)
 
@@ -370,7 +372,9 @@ export function EmailSettingsSection({
                 <FormControl>
                   <Input
                     autoComplete='off'
-                    placeholder={t('New API &lt;noreply@example.com&gt;')}
+                    placeholder={t('{{systemName}} <noreply@example.com>', {
+                      systemName,
+                    })}
                     {...field}
                     onChange={(event) => field.onChange(event.target.value)}
                   />

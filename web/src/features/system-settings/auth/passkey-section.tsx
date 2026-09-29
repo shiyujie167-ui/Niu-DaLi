@@ -50,6 +50,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { statusQueryOptions } from '@/lib/status-query'
 import { cn } from '@/lib/utils'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   SettingsControlGroup,
@@ -171,6 +172,7 @@ interface PasskeySectionProps {
 
 export function PasskeySection(props: PasskeySectionProps) {
   const { t } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const domainGroupTitleId = useId()
   const updateOption = useUpdateOption()
   const updateDomains = useUpdatePasskeyDomains()
@@ -369,7 +371,9 @@ export function PasskeySection(props: PasskeySectionProps) {
                 <FormLabel>{t('Passkey display name')}</FormLabel>
                 <FormControl>
                   <Input
-                    placeholder={t('e.g. New API Console')}
+                    placeholder={t('e.g. {{systemName}} Console', {
+                      systemName,
+                    })}
                     value={field.value ?? ''}
                     onChange={(event) => field.onChange(event.target.value)}
                     name={field.name}

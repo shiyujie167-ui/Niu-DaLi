@@ -32,6 +32,8 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
@@ -76,6 +78,7 @@ function normalizeValue(value: unknown): string {
 
 export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const { t } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const updateOption = useUpdateOption()
 
   const normalizedDefaults: SystemInfoFormValues = {
@@ -163,7 +166,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                   <FormItem>
                     <FormLabel>{t('System Name')}</FormLabel>
                     <FormControl>
-                      <Input placeholder={t('New API')} {...field} />
+                      <Input placeholder={DEFAULT_SYSTEM_NAME} {...field} />
                     </FormControl>
                     <FormDescription>
                       {t('The name displayed across the application')}
@@ -311,7 +314,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                       <FormLabel>{t('Home Page Content')}</FormLabel>
                       <FormControl>
                         <Textarea
-                          placeholder={t('Welcome to our New API...')}
+                          placeholder={t('Welcome to {{systemName}}...', {
+                            systemName,
+                          })}
                           rows={6}
                           {...field}
                         />
