@@ -95,29 +95,33 @@ describe('Niu Dali storefront primary action', () => {
     ).toBeInTheDocument()
   })
 
-  it('sends a guest to account creation', async () => {
-    renderStorefront(false)
+  it.each([
+    ['registration is enabled', { register_enabled: true }],
+    ['registration is disabled', { register_enabled: false }],
+  ])(
+    'sends a guest from Get Started to sign-in when %s',
+    async (_case, status) => {
+      renderStorefront(false, status)
 
-    expect(
-      await screen.findByRole('button', { name: /Create account/i })
-    ).toHaveAttribute('href', '/sign-up')
-    expect(
-      screen.getByRole('button', { name: /Get Started/i })
-    ).toHaveAttribute('href', '/sign-up')
-  })
-
-  it('sends a guest to sign-in when registration is disabled', async () => {
-    renderStorefront(false, { register_enabled: false })
-
-    const signInActions = await screen.findAllByRole('button', {
-      name: /Sign in/i,
-    })
-    expect(signInActions).toHaveLength(2)
-    for (const action of signInActions) {
-      expect(action).toHaveAttribute('href', '/sign-in')
+      const startActions = await screen.findAllByRole('button', {
+        name: /Get Started/i,
+      })
+      expect(startActions).toHaveLength(2)
+      for (const action of startActions) {
+        expect(action).toHaveAttribute('href', '/sign-in')
+      }
+      expect(
+        screen.queryByRole('button', { name: /Create account/i })
+      ).not.toBeInTheDocument()
     }
+  )
+
+  it('offers no docs action even when a docs link is configured', async () => {
+    renderStorefront(false, { docs_link: 'https://docs.example.com' })
+
+    await screen.findAllByRole('button', { name: /View Pricing/i })
     expect(
-      screen.queryByRole('button', { name: /Create account|Get Started/i })
+      screen.queryByRole('button', { name: /Docs/i })
     ).not.toBeInTheDocument()
   })
 

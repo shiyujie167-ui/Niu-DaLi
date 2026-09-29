@@ -16,18 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  ArrowRight01Icon,
-  BookOpen01Icon,
-  Wallet01Icon,
-} from '@hugeicons/core-free-icons'
+import { ArrowRight01Icon, Wallet01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { isSelfRegistrationOpen } from '@/features/auth/lib/self-registration'
-import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
 interface HeroProps {
@@ -41,18 +35,11 @@ const GRID_CELLS = Array.from({ length: 20 }, (_, index) => index)
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
   const { systemName, logo } = useSystemConfig()
-  const { status } = useStatus()
-  const docsUrl =
-    (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
-  let primaryDestination = '/sign-in'
-  let primaryLabel = t('Sign in')
-  if (props.isAuthenticated) {
-    primaryDestination = '/wallet'
-    primaryLabel = t('Open wallet')
-  } else if (isSelfRegistrationOpen(status)) {
-    primaryDestination = '/sign-up'
-    primaryLabel = t('Create account')
-  }
+  // 账号由管理员创建，访客统一从「开始使用」进入登录页
+  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-in'
+  const primaryLabel = props.isAuthenticated
+    ? t('Open wallet')
+    : t('Get Started')
 
   return (
     <section className='niu-dali-hero relative isolate min-h-[min(48rem,calc(100svh-5rem))] overflow-hidden px-5 pt-24 pb-16 sm:px-8 md:pt-28 lg:px-10'>
@@ -130,21 +117,6 @@ export function Hero(props: HeroProps) {
               render={<Link to='/pricing' />}
             >
               {t('View Pricing')}
-            </Button>
-            <Button
-              size='lg'
-              variant='outline'
-              className='niu-dali-secondary-action h-11 px-5'
-              render={
-                docsUrl.startsWith('http') ? (
-                  <a href={docsUrl} target='_blank' rel='noopener noreferrer' />
-                ) : (
-                  <Link to={docsUrl} />
-                )
-              }
-            >
-              <HugeiconsIcon icon={BookOpen01Icon} data-icon='inline-start' />
-              {t('Docs')}
             </Button>
           </div>
 

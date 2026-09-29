@@ -16,10 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { About } from '@/features/about'
+import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
+import { statusQueryOptions } from '@/lib/status-query'
 
 export const Route = createFileRoute('/about/')({
+  beforeLoad: async ({ context }) => {
+    // 「页头导航」关闭「关于」后，直接访问地址也回到首页。
+    // 状态读取失败时保持放行，关于页内容本身是公开的。
+    const status = await context.queryClient
+      .fetchQuery(statusQueryOptions)
+      .catch(() => null)
+    if (parseHeaderNavModulesFromStatus(status).about === false) {
+      throw redirect({ to: '/', replace: true })
+    }
+  },
   component: About,
 })
