@@ -36,6 +36,7 @@ import {
   type ParsedTier,
 } from './billing-expr'
 import { compileBillingExpression } from './billing-expression/parser'
+import { getImageResolutionPrices } from './image-resolution-price'
 import { getDisplayGroupRatio } from './model-helpers'
 import { withPluginPricing } from './plugin-pricing'
 import {
@@ -96,6 +97,7 @@ export type DynamicPricingSummary = {
   isTaskUsage: boolean
   isTimePricing?: boolean
   isMixedBilling?: boolean
+  isImageResolutionPricing?: boolean
   providerCount?: number
   hasUnconfiguredProviders?: boolean
 }
@@ -494,8 +496,45 @@ export function getDynamicPricingSummary(
   }
   if (!isDynamicPricingModel(model)) return null
 
-  const tiers = getDynamicPricingTiers(model)
   const isTaskUsage = isTaskUsagePricingModel(model)
+  const resolutionPrices = isTaskUsage
+    ? null
+    : getImageResolutionPrices(model.billing_expr || '')
+  if (resolutionPrices) {
+    const tiers: ParsedTier[] = resolutionPrices.map(({ label, price }) => ({
+      label,
+      conditions: [],
+      billingUnit: 'request',
+      fixedPrice: price,
+      imageCount: true,
+    }))
+    const entries: DynamicPriceEntry[] = resolutionPrices.map(
+      ({ label, price }) => ({
+        key: `resolution:${label}`,
+        field: `resolution:${label}`,
+        label,
+        shortLabel: label,
+        labelKind: 'schema',
+        value: price,
+        formatted: formatTaskUsageUnitPrice(price, options),
+        unit: 'image',
+      })
+    )
+    return {
+      tiers,
+      tier: tiers[0],
+      tierCount: tiers.length,
+      hasRequestRules: false,
+      isSpecialExpression: false,
+      rawExpression: model.billing_expr || '',
+      entries,
+      primaryEntries: entries,
+      secondaryEntries: [],
+      isTaskUsage: false,
+      isImageResolutionPricing: true,
+    }
+  }
+  const tiers = getDynamicPricingTiers(model)
   const baseExpression = splitBillingExprAndRequestRules(
     model.billing_expr || ''
   ).billingExpr

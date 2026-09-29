@@ -38,6 +38,7 @@ import {
 import { CachedPriceCell } from '../components/cached-price-cell'
 import { ModelCard } from '../components/model-card'
 import { ModelCardGrid } from '../components/model-card-grid'
+import { ModelPriceCell } from '../components/model-price-cell'
 import type { PricingModel } from '../types'
 
 function pricingModel(overrides: Partial<PricingModel> = {}): PricingModel {
@@ -53,7 +54,17 @@ function pricingModel(overrides: Partial<PricingModel> = {}): PricingModel {
   }
 }
 
+const imageResolutionExpression =
+  'tier("1K", fixed(0.041095890411)) * image_count' +
+  ' * (param("size") == "4K" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4k" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4096x4096" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "2K" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2k" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2048x2048" ? 1.3333333333333333 : 1)'
+
 let queryClient: QueryClient
+const originalCurrency = useSystemConfigStore.getState().config.currency
 const originalStorage = useSystemConfigStore.persist.getOptions().storage
 beforeEach(() => {
   const storage = new Map<string, string>()
@@ -79,9 +90,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   queryClient.clear()
-  useSystemConfigStore
-    .getState()
-    .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
+  useSystemConfigStore.getState().setConfig({ currency: originalCurrency })
   vi.useRealTimers()
   vi.unstubAllGlobals()
   useSystemConfigStore.persist.setOptions({ storage: originalStorage })
@@ -120,6 +129,76 @@ describe('model cards', () => {
     expect(screen.getByText('$0.01')).toBeVisible()
     expect(screen.queryByText('/ 1M')).not.toBeInTheDocument()
   })
+  it.each(['card', 'table'] as const)(
+    'shows yuan prices for every image resolution in the %s and updates them when the selected group changes',
+    (view) => {
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...DEFAULT_CURRENCY_CONFIG,
+          quotaDisplayType: 'CNY',
+          usdExchangeRate: 7.3,
+        },
+      })
+      const model = pricingModel({
+        billing_mode: 'tiered_expr',
+        billing_expr: imageResolutionExpression,
+        group_ratio: { default: 1, premium: 2 },
+      })
+      const { container, rerender } = render(
+        view === 'card' ? (
+          <ModelCard
+            model={model}
+            onClick={vi.fn()}
+            tokenUnit='K'
+            selectedGroup='default'
+          />
+        ) : (
+          <ModelPriceCell
+            model={model}
+            options={{ tokenUnit: 'K', selectedGroup: 'default' }}
+          />
+        )
+      )
+      for (const [resolution, price] of [
+        ['1K', '¥0.3'],
+        ['2K', '¥0.4'],
+        ['4K', '¥0.5'],
+      ]) {
+        const label = screen.getByText(resolution, { exact: true })
+        expect(label).toBeVisible()
+        expect(label.parentElement).toHaveTextContent(price)
+        expect(label.parentElement).toHaveTextContent(/\/\s*image/)
+      }
+      expect(container).not.toHaveTextContent(/\d+(?:\.\d+)?x|USD|\$/)
+
+      rerender(
+        view === 'card' ? (
+          <ModelCard
+            model={model}
+            onClick={vi.fn()}
+            tokenUnit='M'
+            selectedGroup='premium'
+          />
+        ) : (
+          <ModelPriceCell
+            model={model}
+            options={{ tokenUnit: 'M', selectedGroup: 'premium' }}
+          />
+        )
+      )
+      for (const [resolution, price] of [
+        ['1K', '¥0.6'],
+        ['2K', '¥0.8'],
+        ['4K', '¥1'],
+      ]) {
+        expect(
+          screen.getByText(resolution, { exact: true }).parentElement
+        ).toHaveTextContent(price)
+      }
+      expect(container).not.toHaveTextContent(/\d+(?:\.\d+)?x|USD|\$|1M/)
+    }
+  )
+
   it('updates the current time tier at a minute boundary and after returning to the page', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-09-07T08:59:59+08:00'))
