@@ -26,16 +26,28 @@ import {
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
+import { STATUS_QUERY_KEY } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
-import { Hero } from '../components'
+import { CTA, Hero } from '../components'
 
-function renderHero(isAuthenticated: boolean) {
+function renderStorefront(
+  isAuthenticated: boolean,
+  status?: Record<string, unknown>
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  if (status) {
+    queryClient.setQueryData(STATUS_QUERY_KEY, status)
+  }
   const rootRoute = createRootRoute({
-    component: () => <Hero isAuthenticated={isAuthenticated} />,
+    component: () => (
+      <>
+        <Hero isAuthenticated={isAuthenticated} />
+        <CTA isAuthenticated={isAuthenticated} />
+      </>
+    ),
   })
   const router = createRouter({
     routeTree: rootRoute,
@@ -63,7 +75,7 @@ describe('Niu Dali storefront primary action', () => {
       systemName: 'NiuDaliTokenAccessForEverySupportedModel',
       logo: '/niu-dali-icon.png',
     })
-    renderHero(false)
+    renderStorefront(false)
 
     expect(
       await screen.findByRole('heading', {
@@ -73,18 +85,40 @@ describe('Niu Dali storefront primary action', () => {
   })
 
   it('sends a guest to account creation', async () => {
-    renderHero(false)
+    renderStorefront(false)
 
     expect(
       await screen.findByRole('button', { name: /Create account/i })
     ).toHaveAttribute('href', '/sign-up')
+    expect(
+      screen.getByRole('button', { name: /Get Started/i })
+    ).toHaveAttribute('href', '/sign-up')
+  })
+
+  it('sends a guest to sign-in when registration is disabled', async () => {
+    renderStorefront(false, { register_enabled: false })
+
+    const signInActions = await screen.findAllByRole('button', {
+      name: /Sign in/i,
+    })
+    expect(signInActions).toHaveLength(2)
+    for (const action of signInActions) {
+      expect(action).toHaveAttribute('href', '/sign-in')
+    }
+    expect(
+      screen.queryByRole('button', { name: /Create account|Get Started/i })
+    ).not.toBeInTheDocument()
   })
 
   it('sends an authenticated user to the wallet', async () => {
-    renderHero(true)
+    renderStorefront(true, { register_enabled: false })
 
-    expect(
-      await screen.findByRole('button', { name: /Open wallet/i })
-    ).toHaveAttribute('href', '/wallet')
+    const walletActions = await screen.findAllByRole('button', {
+      name: /Open wallet/i,
+    })
+    expect(walletActions).toHaveLength(2)
+    for (const action of walletActions) {
+      expect(action).toHaveAttribute('href', '/wallet')
+    }
   })
 })

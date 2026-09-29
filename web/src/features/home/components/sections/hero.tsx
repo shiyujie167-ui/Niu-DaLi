@@ -26,6 +26,7 @@ import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { isSelfRegistrationOpen } from '@/features/auth/lib/self-registration'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
@@ -43,10 +44,15 @@ export function Hero(props: HeroProps) {
   const { status } = useStatus()
   const docsUrl =
     (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
-  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-up'
-  const primaryLabel = props.isAuthenticated
-    ? t('Open wallet')
-    : t('Create account')
+  let primaryDestination = '/sign-in'
+  let primaryLabel = t('Sign in')
+  if (props.isAuthenticated) {
+    primaryDestination = '/wallet'
+    primaryLabel = t('Open wallet')
+  } else if (isSelfRegistrationOpen(status)) {
+    primaryDestination = '/sign-up'
+    primaryLabel = t('Create account')
+  }
 
   return (
     <section className='niu-dali-hero relative isolate min-h-[min(48rem,calc(100svh-5rem))] overflow-hidden px-5 pt-24 pb-16 sm:px-8 md:pt-28 lg:px-10'>

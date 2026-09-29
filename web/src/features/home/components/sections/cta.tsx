@@ -23,6 +23,8 @@ import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
 import { Button } from '@/components/ui/button'
+import { isSelfRegistrationOpen } from '@/features/auth/lib/self-registration'
+import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
 interface CTAProps {
@@ -33,10 +35,16 @@ interface CTAProps {
 export function CTA(props: CTAProps) {
   const { t } = useTranslation()
   const { logo } = useSystemConfig()
-  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-up'
-  const primaryLabel = props.isAuthenticated
-    ? t('Open wallet')
-    : t('Get Started')
+  const { status } = useStatus()
+  let primaryDestination = '/sign-in'
+  let primaryLabel = t('Sign in')
+  if (props.isAuthenticated) {
+    primaryDestination = '/wallet'
+    primaryLabel = t('Open wallet')
+  } else if (isSelfRegistrationOpen(status)) {
+    primaryDestination = '/sign-up'
+    primaryLabel = t('Get Started')
+  }
 
   return (
     <section className='niu-dali-cta relative isolate overflow-hidden px-5 py-20 sm:px-8 md:py-24 lg:px-10'>
