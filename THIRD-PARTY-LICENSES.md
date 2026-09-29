@@ -145,6 +145,16 @@ Transitive dependencies should be audited before a final external release.
 | electron    | development | npm       | `electron`                                            | `39.8.5`                             | MIT                                                |
 | electron    | development | npm       | `electron-builder`                                    | `26.7.0`                             | MIT                                                |
 
+## Adapted Source Components
+
+The video workspace selectively adapts video parameter selection and capability-filtered payload behavior from
+`packages/studio/src/videoModelParameters.js` in [Open Generative AI](https://github.com/Anil-matcha/Open-Generative-AI),
+commit `9f2ed4f0995c6f969ee1706454f2f8c703f6d4f5`.
+
+Copyright (c) 2026 Open Generative AI Contributors. Licensed under the MIT License.
+The complete upstream copyright and license notice is distributed in
+[`web/public/licenses/Open-Generative-AI.txt`](web/public/licenses/Open-Generative-AI.txt).
+
 ## License Texts
 
 ### Apache-2.0

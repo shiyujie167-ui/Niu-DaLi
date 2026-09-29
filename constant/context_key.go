@@ -81,3 +81,6 @@ const (
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 )
+
+// ContextKeyVideoWorkspace marks the authenticated wallet-only video surface.
+const ContextKeyVideoWorkspace = "video_workspace"

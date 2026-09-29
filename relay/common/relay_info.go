@@ -637,6 +637,10 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		info.RequestURLPath = "/v1" + info.RequestURLPath
 	}
 
+	if c.GetBool(constant.ContextKeyVideoWorkspace) {
+		info.IsPlayground = true
+	}
+
 	userSetting, ok := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	if ok {
 		info.UserSetting = userSetting

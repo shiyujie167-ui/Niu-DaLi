@@ -92,6 +92,10 @@ export function SidebarModulesSection({
         title: t('Playground'),
         description: t('Experiment with prompts and models in real time.'),
       },
+      videoWorkspace: {
+        title: t('Video workspace'),
+        description: t('Generate videos and view your task history.'),
+      },
       chat: {
         title: t('Chat'),
         description: t('Access previous conversations and start new ones.'),

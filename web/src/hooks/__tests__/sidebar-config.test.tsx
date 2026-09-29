@@ -180,3 +180,30 @@ describe('audit log sidebar entry', () => {
     expect(titles).toContain('Audit Logs')
   })
 })
+
+describe('video workspace sidebar visibility', () => {
+  it('legacy chat settings show the video workspace alongside the playground', () => {
+    const { result } = sidebarFor({ chat: { enabled: true, playground: true } })
+    expect(result.current.find((group) => group.id === 'chat')?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Video workspace',
+          url: '/video-workspace',
+        }),
+      ])
+    )
+  })
+
+  it.each([
+    [{ chat: { enabled: false } }, undefined],
+    [{ chat: { enabled: true, videoWorkspace: false } }, undefined],
+    [undefined, { chat: { enabled: true, videoWorkspace: false } }],
+  ])('respects admin and personal video visibility (%j, %j)', (admin, user) => {
+    const { result } = sidebarFor(admin, user)
+    expect(
+      result.current
+        .flatMap((group) => group.items)
+        .some((item) => item.title === 'Video workspace')
+    ).toBe(false)
+  })
+})
