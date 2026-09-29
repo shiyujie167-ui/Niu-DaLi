@@ -100,6 +100,94 @@ const model: PricingModel = {
 }
 const clients: QueryClient[] = []
 
+const imageResolutionExpression =
+  'tier("1K", fixed(0.041095890411)) * image_count' +
+  ' * (param("size") == "4K" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4k" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4096x4096" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "2K" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2k" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2048x2048" ? 1.3333333333333333 : 1)'
+
+it('shows final image resolution prices and group prices in marketplace details without multipliers', () => {
+  const previous = useSystemConfigStore.getState().config.currency
+  useSystemConfigStore.getState().setConfig({
+    currency: {
+      ...DEFAULT_CURRENCY_CONFIG,
+      quotaDisplayType: 'CNY',
+      usdExchangeRate: 7.3,
+    },
+  })
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  clients.push(client)
+  try {
+    render(
+      <QueryClientProvider client={client}>
+        <ModelDetailsContent
+          model={{
+            ...model,
+            model_name: 'image-resolution',
+            billing_expr: imageResolutionExpression,
+            billing_usage_schema: undefined,
+          }}
+          groupRatio={{ default: 2 }}
+          usableGroup={{ default: { desc: '', ratio: 2 } }}
+          endpointMap={{}}
+          autoGroups={[]}
+          priceRate={1}
+          usdExchangeRate={7.3}
+          tokenUnit='M'
+        />
+      </QueryClientProvider>
+    )
+    for (const [resolution, price] of [
+      ['1K', '¥0.3/image'],
+      ['2K', '¥0.4/image'],
+      ['4K', '¥0.5/image'],
+    ]) {
+      expect(screen.getAllByText(resolution).length).toBeGreaterThan(0)
+      // The existing desktop table and mobile cards both show the final price.
+      expect(screen.getAllByText(price)).toHaveLength(2)
+    }
+    for (const groupPrice of ['¥0.6', '¥0.8', '¥1']) {
+      expect(screen.getByText(groupPrice)).toBeVisible()
+    }
+    expect(
+      screen.queryByText('Conditional multipliers')
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/1\.6666666666666667x/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/1\.3333333333333333x/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/\$/)).not.toBeInTheDocument()
+  } finally {
+    act(() => useSystemConfigStore.getState().setConfig({ currency: previous }))
+  }
+})
+
+it('retains the exact matched image multiplier in compact usage log details', () => {
+  render(
+    <DynamicPricingBreakdown
+      billingExpr={imageResolutionExpression}
+      compact
+      matchedTierLabel='1K'
+      matchedBillingUnit='request'
+      matchedFixedPrice={0.041095890411}
+      requestRules={[
+        {
+          cond: 'param("size") == "4K"',
+          multiplier: 1.6666666666666667,
+          matched: true,
+        },
+      ]}
+    />
+  )
+  expect(screen.getByText('Conditional multipliers')).toBeVisible()
+  expect(screen.getByText('1.6666666666666667x · Matched')).toBeVisible()
+  expect(screen.queryByText('2K')).not.toBeInTheDocument()
+})
+
 it('shows nested task conditions and prices in detail and group tables without ambiguous log matches', () => {
   vi.spyOn(api, 'get').mockResolvedValue({ data: { data: { groups: [] } } })
   const client = new QueryClient({

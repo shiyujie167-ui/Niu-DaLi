@@ -25,6 +25,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
 import {
+  formatTaskUsageUnitPrice,
   getDynamicDisplayGroupRatio,
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
@@ -133,12 +134,22 @@ export function ModelPriceCell(props: {
         if (hasRequestPrice && entry.unit === 'token') {
           suffix = `/${t('{{unit}} tokens', { unit: tokenUnitLabel })}`
         }
+        const formattedPrice = dynamic.isImageResolutionPricing
+          ? formatTaskUsageUnitPrice(entry.value, {
+              ...options,
+              tokenUnit,
+              groupRatioMultiplier: getDynamicDisplayGroupRatio(
+                props.model,
+                options.selectedGroup
+              ),
+            })
+          : (entry.formattedRange ?? entry.formatted)
         return {
           label:
             entry.labelKind === 'schema'
               ? entry.shortLabel
               : t(entry.shortLabel),
-          value: `${entry.formattedRange ?? entry.formatted}${suffix}`,
+          value: `${formattedPrice}${suffix}`,
         }
       })
     if (metrics.length === 0) {

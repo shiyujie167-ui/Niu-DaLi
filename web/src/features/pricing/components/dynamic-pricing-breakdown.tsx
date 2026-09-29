@@ -53,6 +53,7 @@ import {
   type DynamicPriceLabelKind,
   type DynamicPriceOptions,
 } from '../lib/dynamic-price'
+import { getImageResolutionPrices } from '../lib/image-resolution-price'
 import { getTaskPricingDisplayTiers } from '../lib/task-matrix-display'
 import {
   taskPriceLabel,
@@ -86,6 +87,8 @@ type DynamicPricingBreakdownProps = {
    * icon header and uses the dialog's small text sizes. Defaults to false.
    */
   compact?: boolean
+  /** Expand complete image size rules into final prices in the marketplace. */
+  showImageResolutionPrices?: boolean
   usageSchema?: BillingUsageSchema
   taskPriceOptions?: Pick<
     DynamicPriceOptions,
@@ -287,6 +290,7 @@ export function DynamicPricingBreakdown({
   requestRules,
   hideCacheColumns = false,
   compact = false,
+  showImageResolutionPrices = false,
   usageSchema,
   taskPriceOptions,
   usageFacts,
@@ -309,6 +313,30 @@ export function DynamicPricingBreakdown({
   }, [currency])
 
   const { tiers, ruleGroups } = useMemo(() => {
+    if (
+      showImageResolutionPrices &&
+      !compact &&
+      !usageSchema &&
+      requestRules == null &&
+      matchedTierLabel == null &&
+      matchedBillingUnit == null &&
+      matchedFixedPrice == null &&
+      usageFacts == null
+    ) {
+      const resolutionPrices = getImageResolutionPrices(expr)
+      if (resolutionPrices) {
+        return {
+          tiers: resolutionPrices.map<ParsedTier>((resolution) => ({
+            label: resolution.label,
+            conditions: [],
+            billingUnit: 'request',
+            fixedPrice: resolution.price,
+            imageCount: true,
+          })),
+          ruleGroups: [],
+        }
+      }
+    }
     const split = splitBillingExprAndRequestRules(expr)
     const parsedTiers = usageSchema
       ? getTaskPricingDisplayTiers(split.billingExpr, usageSchema)
@@ -333,7 +361,17 @@ export function DynamicPricingBreakdown({
       tiers: parsedTiers,
       ruleGroups: parsedRules || [],
     }
-  }, [expr, usageSchema, requestRules])
+  }, [
+    expr,
+    usageSchema,
+    requestRules,
+    showImageResolutionPrices,
+    compact,
+    matchedTierLabel,
+    matchedBillingUnit,
+    matchedFixedPrice,
+    usageFacts,
+  ])
 
   const hasTiers = tiers.length > 0
   const hasRules = ruleGroups.length > 0

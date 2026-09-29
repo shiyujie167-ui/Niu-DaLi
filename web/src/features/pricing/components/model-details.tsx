@@ -78,6 +78,7 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getImageResolutionPrices } from '../lib/image-resolution-price'
 import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
 import { withPluginPricing } from '../lib/plugin-pricing'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
@@ -1110,12 +1111,26 @@ function ProviderGroupPricingSection(
   )
 
   if (isDynamicPricingModel(props.model)) {
-    const dynamicTiers = props.model.billing_usage_schema
+    let dynamicTiers = props.model.billing_usage_schema
       ? getTaskPricingDisplayTiers(
           props.model.billing_expr,
           props.model.billing_usage_schema
         )
       : getDynamicPricingTiers(props.model)
+    if (!props.model.billing_usage_schema) {
+      const resolutionPrices = getImageResolutionPrices(
+        props.model.billing_expr || ''
+      )
+      if (resolutionPrices) {
+        dynamicTiers = resolutionPrices.map((resolution) => ({
+          label: resolution.label,
+          conditions: [],
+          billingUnit: 'request',
+          fixedPrice: resolution.price,
+          imageCount: true,
+        }))
+      }
+    }
     const hasRequestPrice = dynamicTiers.some(
       (tier) => !('unitPrices' in tier) && tier.billingUnit === 'request'
     )
@@ -1481,10 +1496,15 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     props.model.billing_expr,
     props.model.billing_usage_schema
   )
+  const hasImageResolutionPrices =
+    isDynamic &&
+    !props.model.billing_usage_schema &&
+    getImageResolutionPrices(props.model.billing_expr || '') !== null
   const showBasePrices =
-    !props.model.billing_usage_schema ||
-    simpleTaskPricing ||
-    taskTiers.length === 0
+    !hasImageResolutionPrices &&
+    (!props.model.billing_usage_schema ||
+      simpleTaskPricing ||
+      taskTiers.length === 0)
 
   return (
     <div className='@container/details space-y-4'>
@@ -1523,6 +1543,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
             )}
             {isDynamic && !simpleTaskPricing && (
               <DynamicPricingBreakdown
+                showImageResolutionPrices
                 billingExpr={props.model.billing_expr}
                 usageSchema={props.model.billing_usage_schema}
                 taskPriceOptions={{

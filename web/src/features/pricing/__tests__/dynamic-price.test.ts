@@ -20,6 +20,11 @@ import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'vitest'
 
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
+
 import { parseTiersFromExpr } from '../lib/billing-expr'
 import { getBillingModeLabelKey } from '../lib/billing-mode'
 import {
@@ -31,6 +36,7 @@ import {
   hasTaskUsageSchema,
   isUnconfiguredTaskUsageModel,
 } from '../lib/dynamic-price'
+import { getImageResolutionPrices } from '../lib/image-resolution-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 
@@ -53,6 +59,145 @@ const summaryOptions = {
   usdExchangeRate: 6,
   groupRatioMultiplier: 2,
 }
+
+const imageResolutionExpression =
+  'tier("1K", fixed(0.041095890411)) * image_count' +
+  ' * (param("size") == "4K" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4k" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "4096x4096" ? 1.6666666666666667 : 1)' +
+  ' * (param("size") == "2K" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2k" ? 1.3333333333333333 : 1)' +
+  ' * (param("size") == "2048x2048" ? 1.3333333333333333 : 1)'
+
+describe('image resolution prices', () => {
+  test('evaluates complete size rules and collapses equally priced aliases in resolution order', () => {
+    const prices = getImageResolutionPrices(imageResolutionExpression)
+    expect(prices?.map((entry) => entry.label)).toEqual(['1K', '2K', '4K'])
+    expect(prices?.map((entry) => entry.price)).toEqual([
+      0.041095890411,
+      0.041095890411 * 1.3333333333333333,
+      0.041095890411 * 1.6666666666666667,
+    ])
+  })
+
+  test('recognizes equivalent equality directions and grouped size aliases in a versioned expression', () => {
+    expect(
+      getImageResolutionPrices(
+        'v1:(image_count * tier("1024x1024", fixed(0.1))) * (("2K" == param("size") || param("size") == "2k" || param("size") == "2048x2048") ? 2 : 1)'
+      )
+    ).toEqual([
+      { label: '1K', price: 0.1 },
+      { label: '2K', price: 0.2 },
+    ])
+  })
+
+  test('preserves free image prices for every recognized resolution', () => {
+    expect(
+      getImageResolutionPrices(
+        'tier("1K", fixed(0)) * image_count * (param("size") == "2K" ? 2 : 1)'
+      )
+    ).toEqual([
+      { label: '1K', price: 0 },
+      { label: '2K', price: 0 },
+    ])
+  })
+
+  test('combines every size factor that matches the same resolution', () => {
+    expect(
+      getImageResolutionPrices(
+        'tier("1K", fixed(0.1)) * image_count * ((param("size") == "2K" || param("size") == "2k" || param("size") == "2048x2048") ? 2 : 1) * ((param("size") == "2K" || param("size") == "2k" || param("size") == "2048x2048") ? 3 : 1)'
+      )
+    ).toEqual([
+      { label: '1K', price: 0.1 },
+      { label: '2K', price: 0.6 },
+    ])
+  })
+
+  test('does not collapse a pixel-only rule into a resolution whose other aliases have a different charge', () => {
+    expect(
+      getImageResolutionPrices(
+        'tier("1K", fixed(0.1)) * image_count * (param("size") == "2048x2048" ? 2 : 1)'
+      )
+    ).toBeNull()
+  })
+
+  test.each([
+    imageResolutionExpression.replace('"4k" ? 1.6666666666666667', '"4k" ? 2'),
+    `${imageResolutionExpression} * (param("quality") == "hd" ? 2 : 1)`,
+    imageResolutionExpression.replace('tier("1K"', 'tier("default"'),
+    imageResolutionExpression.replace(' * image_count', ''),
+    `${imageResolutionExpression} * image_count`,
+    `${imageResolutionExpression} * (param("size") == "1K" ? 2 : 1)`,
+
+    'tier("1K", p * 2) * image_count',
+    imageResolutionExpression.replace(
+      '"2K" ? 1.3333333333333333',
+      '"unknown" ? 1.3333333333333333'
+    ),
+  ])(
+    'keeps ambiguous or unsupported resolution pricing on its original display path',
+    (expression) => {
+      expect(getImageResolutionPrices(expression)).toBeNull()
+    }
+  )
+
+  test('formats every resolution with the actual yuan price and preserves group and recharge pricing', () => {
+    const previous = useSystemConfigStore.getState().config.currency
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 7.3,
+      },
+    })
+    try {
+      const model = pricingModel({
+        billing_mode: 'tiered_expr',
+        billing_expr: imageResolutionExpression,
+      })
+      const summary = getDynamicPricingSummary(model, { tokenUnit: 'K' })
+      expect(
+        summary?.primaryEntries.map((entry) => [
+          entry.shortLabel,
+          entry.formatted,
+          entry.unit,
+        ])
+      ).toEqual([
+        ['1K', '¥0.3', 'image'],
+        ['2K', '¥0.4', 'image'],
+        ['4K', '¥0.5', 'image'],
+      ])
+      expect(
+        summary?.primaryEntries.every((entry) => entry.labelKind === 'schema')
+      ).toBe(true)
+      expect(summary?.hasRequestRules).toBe(false)
+      expect(summary?.tierCount).toBe(3)
+      const recharge = getDynamicPricingSummary(model, {
+        tokenUnit: 'M',
+        groupRatioMultiplier: 2,
+        showRechargePrice: true,
+        priceRate: 3.65,
+        usdExchangeRate: 7.3,
+      })
+      expect(recharge?.primaryEntries.map((entry) => entry.formatted)).toEqual([
+        '¥0.3',
+        '¥0.4',
+        '¥0.5',
+      ])
+      const group = getDynamicPricingSummary(model, {
+        tokenUnit: 'M',
+        groupRatioMultiplier: 2,
+      })
+      expect(group?.primaryEntries.map((entry) => entry.formatted)).toEqual([
+        '¥0.6',
+        '¥0.8',
+        '¥1',
+      ])
+    } finally {
+      useSystemConfigStore.getState().setConfig({ currency: previous })
+    }
+  })
+})
 
 describe('expression price summaries', () => {
   test('keeps request prices unchanged by token units and separates mixed billing units', () => {
