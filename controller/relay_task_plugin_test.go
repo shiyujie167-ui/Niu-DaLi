@@ -1011,6 +1011,73 @@ func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
 	assert.ElementsMatch(t, supported, actual, "the image-only model must not be offered without an image input")
 }
 
+func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
+	db, engine, calls := videoWorkspaceTestRouter(t)
+	cases := []struct {
+		name       string
+		maxSeconds int
+		maxPrompt  int
+		sizes      []string
+	}{
+		{"Sd-2.0满血933", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.0fast", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.5", 30, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.0mini", 15, 2000, []string{"16:9", "9:16", "1:1"}},
+	}
+	names := []string{"minmax-h3", "wan-3.0"}
+	for _, tc := range cases {
+		names = append(names, tc.name)
+	}
+	modes, expressions := map[string]string{}, map[string]string{}
+	for _, name := range names {
+		modes[name], expressions[name] = "tiered_expr", `tier("video", u("seconds") * 0.01)`
+	}
+	withTieredBillingConfig(t, modes, expressions)
+	require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "sora-2").Update("status", common.ChannelStatusManuallyDisabled).Error)
+	settings := `{"task_plugin_key":"mengwuxian"}`
+	channel := model.Channel{Name: "mengwuxian-capabilities", Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Group: "default", Models: strings.Join(names, ","), Setting: &settings}
+	require.NoError(t, db.Create(&channel).Error)
+	for _, name := range names {
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: channel.Id, Enabled: true}).Error)
+	}
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var catalog struct {
+		Data struct {
+			Models []videoWorkspaceModel `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	require.Len(t, catalog.Data.Models, len(cases), "image-required and unavailable models must not appear")
+	byModel := make(map[string]videoWorkspaceModel, len(catalog.Data.Models))
+	for _, item := range catalog.Data.Models {
+		byModel[item.ID] = item
+		assert.True(t, item.SupportsImage)
+		assert.Equal(t, int64(10<<20), item.MaxImageBytes)
+		assert.Equal(t, []string{"image/png", "image/jpeg", "image/webp"}, item.SupportedImageTypes)
+	}
+	for _, tc := range cases {
+		item, found := byModel[tc.name]
+		require.True(t, found, tc.name)
+		wantDurations := make([]int, tc.maxSeconds-3)
+		for i := range wantDurations {
+			wantDurations[i] = i + 4
+		}
+		assert.Equal(t, wantDurations, item.Durations, tc.name)
+		assert.Equal(t, tc.sizes, item.Sizes, tc.name)
+		assert.Equal(t, tc.maxPrompt, item.MaxPromptLength, tc.name)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"Sd-2.0mini","prompt":"`+strings.Repeat("画", 2001)+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://workspace.example")
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "Prompt exceeds the selected model limit")
+	assert.Zero(t, calls.Load(), "overlong prompts must fail before upstream submission")
+}
+
 func TestVideoWorkspaceProviderOnlyPricing(t *testing.T) {
 	db, engine, calls := videoWorkspaceTestRouter(t)
 	withSelfUseModeDisabled(t)

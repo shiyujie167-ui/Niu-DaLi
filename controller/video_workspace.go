@@ -150,6 +150,28 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 			}
 			item.SupportsImage, item.MaxImageBytes = true, 4928307
 			item.Durations = []int{5}
+		case "mengwuxian":
+			maxDuration := 15
+			switch item.ID {
+			case "Sd-2.0满血933", "Sd-2.0fast":
+				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 5000)
+			case "Sd-2.5":
+				maxDuration = 30
+				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 15000)
+			case "Sd-2.0mini":
+				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 2000)
+			default:
+				// minmax-h3 requires a reference image; wan-3.0 is unavailable.
+				continue
+			}
+			item.SupportsImage, item.MaxImageBytes = true, 10<<20
+			for seconds := 4; seconds <= maxDuration; seconds++ {
+				item.Durations = append(item.Durations, seconds)
+			}
+			item.Sizes = []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+			if item.ID == "Sd-2.0mini" {
+				item.Sizes = []string{"16:9", "9:16", "1:1"}
+			}
 		case "doubao":
 			// Keep the text-capable models from the built-in VIDEO_MODELS table.
 			// lite-i2v requires an image, but this adapter accepts only reference
@@ -275,6 +297,10 @@ func PrepareVideoWorkspaceSubmission(c *gin.Context) {
 		return
 	}
 	selected := items[index]
+	if utf8.RuneCountInString(prompt) > selected.MaxPromptLength {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "Prompt exceeds the selected model limit"}})
+		return
+	}
 	if raw, exists := fields["seconds"]; exists {
 		seconds, err := strconv.Atoi(raw)
 		if err != nil || seconds <= 0 || seconds > relaycommon.MaxTaskDurationSeconds || !slices.Contains(selected.Durations, seconds) {

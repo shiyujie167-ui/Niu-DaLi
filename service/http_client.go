@@ -42,6 +42,21 @@ type proxyURLConfig struct {
 }
 
 func checkRedirect(req *http.Request, via []*http.Request) error {
+	// Go forwards custom authentication headers across redirects. Keep API keys
+	// on the original origin, including its scheme and port.
+	hasAPIKey := req.Header.Get("X-API-Key") != ""
+	if len(via) > 0 && via[0] != nil && via[0].Header.Get("X-API-Key") != "" {
+		hasAPIKey = true
+	}
+	if hasAPIKey {
+		if len(via) == 0 || via[0] == nil || via[0].URL == nil {
+			return fmt.Errorf("redirect with API credentials requires the original request")
+		}
+		original := via[0].URL
+		if !strings.EqualFold(req.URL.Scheme, original.Scheme) || !strings.EqualFold(req.URL.Host, original.Host) {
+			return fmt.Errorf("cross-origin redirect with API credentials blocked")
+		}
+	}
 	urlStr := req.URL.String()
 	if err := validateURLWithCurrentFetchSetting(urlStr, true); err != nil {
 		return fmt.Errorf("redirect to %s blocked: %v", urlStr, err)
