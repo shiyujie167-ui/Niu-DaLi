@@ -2,7 +2,7 @@
 
 ![new-api](/web/public/logo.png)
 
-# New API
+# 大力牛
 
 **An AI gateway for models, applications, and agents**
 
