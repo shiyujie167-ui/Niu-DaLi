@@ -108,7 +108,10 @@ function parseContentUrl(value: unknown): string {
   }
 }
 
-function parseTaskArtifact(value: unknown): TaskArtifact {
+function parseTaskArtifact(
+  value: unknown,
+  parseUrl: (value: unknown) => string
+): TaskArtifact {
   if (!isRecord(value)) {
     throw new TaskArtifactApiError('invalid_artifact')
   }
@@ -126,7 +129,7 @@ function parseTaskArtifact(value: unknown): TaskArtifact {
   const artifact: TaskArtifact = {
     key,
     type: type as TaskArtifact['type'],
-    content_url: parseContentUrl(value.content_url),
+    content_url: parseUrl(value.content_url),
   }
   if (typeof value.mime_type === 'string' && value.mime_type.trim()) {
     const mimeType = value.mime_type.trim()
@@ -161,7 +164,8 @@ export function parseLegacyAudioClips(data: unknown): AudioClip[] {
 }
 
 export function parseTaskArtifactsResponse(
-  response: TaskArtifactsResponse
+  response: TaskArtifactsResponse,
+  parseUrl: (value: unknown) => string = parseContentUrl
 ): TaskArtifactProjection {
   if (!response.success) {
     throw new TaskArtifactApiError(
@@ -179,7 +183,9 @@ export function parseTaskArtifactsResponse(
     throw new TaskArtifactApiError('invalid_artifact_response')
   }
 
-  const artifacts = artifactValues.map(parseTaskArtifact)
+  const artifacts = artifactValues.map((value) =>
+    parseTaskArtifact(value, parseUrl)
+  )
   const keys = new Set<string>()
   for (const artifact of artifacts) {
     if (keys.has(artifact.key)) {
@@ -189,9 +195,7 @@ export function parseTaskArtifactsResponse(
   }
   const projection: TaskArtifactProjection = { artifacts }
   if (response.data?.legacy_content_url != null) {
-    projection.legacyContentUrl = parseContentUrl(
-      response.data.legacy_content_url
-    )
+    projection.legacyContentUrl = parseUrl(response.data.legacy_content_url)
   }
   if (response.data?.legacy_audio_clips != null) {
     projection.legacyAudioClips = parseLegacyAudioClips(

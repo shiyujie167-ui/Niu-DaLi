@@ -35,6 +35,7 @@ import {
   Ticket,
   User,
   Users,
+  Video,
   Wallet,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -61,6 +62,11 @@ export function useSidebarData(): SidebarData {
             title: t('Playground'),
             url: '/playground',
             icon: FlaskConical,
+          },
+          {
+            title: t('Video workspace'),
+            url: '/video-workspace',
+            icon: Video,
           },
           {
             title: t('Chat'),

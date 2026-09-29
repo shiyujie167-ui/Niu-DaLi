@@ -27,7 +27,7 @@ afterEach(() => {
 })
 
 describe('resolveChatUrl', () => {
-  it('names the AQBot provider after the configured site when the template imports into AQBot', () => {
+  it('preserves New API attribution when a configured site imports into AQBot', () => {
     useSystemConfigStore.getState().setConfig({ systemName: '大力牛' })
 
     const url = resolveChatUrl({
@@ -37,7 +37,7 @@ describe('resolveChatUrl', () => {
     })
 
     const query = new URLSearchParams(url.split('?')[1])
-    expect(query.get('name')).toBe('大力牛')
+    expect(query.get('name')).toBe('New API')
     expect(query.get('baseurl')).toBe('https://api.example.com')
     expect(query.get('apikey')).toBe('sk-abc')
   })

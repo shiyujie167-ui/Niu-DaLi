@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "sora", "sunoapi", "vertex-ai", "vidu"}
+var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "mengwuxian", "sora", "sunoapi", "vertex-ai", "vidu"}
 
 func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing.T) {
 	generation := jsplugin.DefaultRegistry.Generation()
@@ -108,17 +108,21 @@ func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {
 					break
 				}
 			}
-			require.True(t, foundResponses, "openai_responses claim must be present")
-			assert.Equal(t, []string{"stream", "sync", "background"}, responsesClaim.Supports)
+			require.Equal(t, key != "mengwuxian", foundResponses, "only Mengwuxian omits the existing Responses contract")
+			if foundResponses {
+				assert.Equal(t, []string{"stream", "sync", "background"}, responsesClaim.Supports)
+			}
 			for _, model := range plugin.Meta.Models {
 				binding, claimed := registry.Generation().LookupEndpoint("POST", "/v1/responses", model)
-				require.True(t, claimed, model)
-				assert.Same(t, plugin, binding.Plugin)
+				require.Equal(t, foundResponses, claimed, model)
+				if claimed {
+					assert.Same(t, plugin, binding.Plugin)
+				}
 			}
 			for _, hook := range []string{"decodeRequest", "renderEvents", "renderFinal"} {
 				callable, callableErr := plugin.Engine.HasCallablePath(t.Context(), "protocols", "openai_responses", hook)
 				require.NoError(t, callableErr)
-				assert.True(t, callable, hook)
+				assert.Equal(t, foundResponses, callable, hook)
 			}
 			for _, hook := range []string{"extractUsage", "extractUsageOnComplete"} {
 				callable, callableErr := plugin.Engine.HasExport(t.Context(), hook)
@@ -142,6 +146,9 @@ func TestBuiltInResponsesDecodersEchoChannelMappedAlias(t *testing.T) {
 			registry := jsplugin.NewRegistry()
 			plugin, registerErr := registry.RegisterFactory(source, jsplugin.Options{Key: key})
 			require.NoError(t, registerErr)
+			if key == "mengwuxian" {
+				return
+			}
 			require.NotEmpty(t, plugin.Meta.Models)
 
 			alias := "alias-under-test"

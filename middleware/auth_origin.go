@@ -74,3 +74,16 @@ func isAllowedSessionOrigin(request *http.Request, origin string) bool {
 	}
 	return false
 }
+
+// BrowserOriginGuard always validates browser origins, including local HTTP
+// development, for authenticated dashboard operations that spend wallet quota.
+func BrowserOriginGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin, ok := requestBrowserOrigin(c.Request)
+		if !ok || !isAllowedSessionOrigin(c.Request, origin) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "code": "AUTH_ORIGIN_FORBIDDEN", "message": "request origin is not allowed"})
+			return
+		}
+		c.Next()
+	}
+}

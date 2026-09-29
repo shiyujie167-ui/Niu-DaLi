@@ -16,10 +16,14 @@ export default defineConfig(({ envMode }) => {
     'http://localhost:3000'
 
   const isProd = envMode === 'production'
+  const isLocalServer = ['localhost', '127.0.0.1', '[::1]'].includes(
+    new URL(serverUrl).hostname
+  )
   const devProxy = Object.fromEntries(
     (['/api', '/v1', '/mj', '/pg'] as const).map((key) => [
       key,
-      { target: serverUrl, changeOrigin: true },
+      // Preserve the browser host for the local backend's same-origin checks.
+      { target: serverUrl, changeOrigin: !isLocalServer },
     ])
   ) as Record<string, { target: string; changeOrigin: boolean }>
 

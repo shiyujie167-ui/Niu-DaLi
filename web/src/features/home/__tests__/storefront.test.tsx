@@ -85,12 +85,12 @@ describe('Niu Dali storefront primary action', () => {
     ).toHaveClass('[overflow-wrap:anywhere]')
   })
 
-  it('names the configured site in the multi-protocol feature card', async () => {
+  it('preserves New API attribution in the multi-protocol feature card', async () => {
     renderStorefront(false)
 
     expect(
       await screen.findByText(
-        'Supports one-click configuration and perfectly adapts to 大力牛 multi-protocol configuration.'
+        'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
       )
     ).toBeInTheDocument()
   })

@@ -615,6 +615,9 @@ func executeTaskSubmissionWith(
 
 	stage = "insert"
 	task := model.InitTask(result.Platform, relayInfo)
+	if c.GetBool(constant.ContextKeyVideoWorkspace) {
+		task.Properties.Input = c.GetString("video_workspace_prompt")
+	}
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.BillingSource = relayInfo.BillingSource
@@ -795,6 +798,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 	switch {
 	case taskErr == nil:
 		stop.Reason = "request_completed"
+	case c.GetBool(constant.ContextKeyVideoWorkspace):
+		stop.Reason = "video_workspace_single_attempt"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
 	case service.ShouldSkipRetryAfterChannelAffinityFailure(c):

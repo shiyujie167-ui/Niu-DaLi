@@ -1,24 +1,35 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -657,4 +668,447 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 	assert.Equal(t, []string{"reserve", "refund"}, events)
 	assert.Equal(t, 1, billing.refunds)
 	assert.False(t, c.Writer.Written())
+}
+
+// This fixture uses disposable dialect databases and a local fake provider;
+// it never reads channel keys, users, or balances from a running deployment.
+func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int32) {
+	t.Helper()
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Log{}, &model.Token{})
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = false, false, false, true, false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = oldRedis, oldMemory, oldBatch, oldConsume, oldExport
+	})
+	withTieredBillingConfig(t, map[string]string{"sora-2": "tiered_expr"}, map[string]string{"sora-2": `tier("video", u("seconds") * 0.01)`})
+	_, err := pluginruntime.DefaultRegistry.Register(`
+ export const meta={apiVersion:1,key:"sora",name:"Workspace test provider",version:"1.0.0",author:{name:"Test"},models:["sora-2"],channelTypes:[55,1],protocols:["openai_video"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second",description:{en:"Video generation unit price"}}}};
+ export const protocols={openai_video:{decodeRequest:function(ctx){const f=ctx.body.fields;return {kind:"submit",model:ctx.model,action:"text_to_video",requestBody:{prompt:f.prompt[0],seconds:Number((f.seconds||[4])[0])}}},render:function(ctx,task){return {id:task.task_id}}}};
+ export function buildSubmitRequest(ctx){return {url:ctx.baseUrl+"/videos",headers:{Authorization:"Bearer "+ctx.apiKey},body:ctx.requestBody};}
+ export function parseSubmitResponse(ctx,response){return {taskId:"upstream-"+utils.uuid(),taskData:response.body,immediate:{status:response.body.status,reason:"provider failed",url:"https://cdn.example/video.mp4"}};}
+ export function extractUsage(ctx){return {seconds:ctx.requestBody.seconds};}
+ export function listArtifacts(){return [{key:"video",type:"video",mimeType:"video/mp4"}];}
+ export function buildContentRequest(ctx){return {url:ctx.baseUrl+"/content",method:"GET",headers:{Authorization:"Bearer "+ctx.apiKey}};}
+ export function buildQueryRequest(){throw new Error("terminal task must not poll");}
+ export function parseTaskResult(){throw new Error("terminal task must not poll");}
+ `, pluginruntime.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, pluginruntime.DefaultRegistry.Unregister("sora")) })
+	calls := &atomic.Int32{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer local-test-channel-key", r.Header.Get("Authorization"))
+		if r.URL.Path == "/content" {
+			w.Header().Set("Content-Type", "video/mp4")
+			_, _ = w.Write([]byte("test-video-content"))
+			return
+		}
+		calls.Add(1)
+		var request map[string]any
+		require.NoError(t, common.DecodeJson(r.Body, &request))
+		w.Header().Set("Content-Type", "application/json")
+		if request["prompt"] == "fail" {
+			_, _ = io.WriteString(w, `{"status":"FAILURE"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"status":"SUCCESS"}`)
+	}))
+	t.Cleanup(upstream.Close)
+	service.InitHttpClient()
+	user := model.User{Id: 7, Username: "workspace-owner", AffCode: "workspace-owner", Status: common.UserStatusEnabled, Role: common.RoleRootUser, Group: "default", Quota: 1_000_000}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 11, UserId: 7, Key: "unused-workspace-api-token", Name: "unchanged", RemainQuota: 123456}).Error)
+	channel := model.Channel{Name: "workspace-local-provider", Type: constant.ChannelTypeSora, Key: "local-test-channel-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Models: "sora-2", Group: "default"}
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "default", Model: "sora-2", ChannelId: channel.Id, Enabled: true}).Error)
+	engine := gin.New()
+	engine.Use(middleware.BodyStorageCleanup(), func(c *gin.Context) {
+		c.Set("id", 7)
+		c.Set("role", common.RoleRootUser)
+		c.Set("username", user.Username)
+		c.Set("session_id", "test-session")
+		c.Set("auth_version", int64(1))
+		c.Set("session_version", int64(1))
+		common.SetContextKey(c, constant.ContextKeyUserGroup, "default")
+		common.SetContextKey(c, constant.ContextKeyUserSetting, kitdto.UserSetting{BillingPreference: "subscription_only"})
+		c.Next()
+	}, VideoWorkspaceSession)
+	engine.GET("/api/video-workspace/models", GetVideoWorkspaceModels)
+	engine.GET("/api/video-workspace/tasks", GetVideoWorkspaceTasks)
+	engine.GET("/api/video-workspace/tasks/:task_id/artifacts", GetVideoWorkspaceArtifacts)
+	engine.GET("/api/video-workspace/tasks/:task_id/artifacts/:artifact_key/content", VideoWorkspaceArtifactContent)
+	engine.POST("/api/video-workspace/tasks", middleware.BrowserOriginGuard(), PrepareVideoWorkspaceSubmission, middleware.PinTaskPluginEndpoint(), middleware.PrepareTaskPluginEndpoint(), func(c *gin.Context) {
+		require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, "sora-2"))
+		c.Next()
+	}, func(c *gin.Context) { RelayTaskPluginEndpoint(c, RelayTask) })
+	return db, engine, calls
+}
+
+func TestVideoWorkspaceWalletPersistenceAndOwnership(t *testing.T) {
+	db, engine, calls := videoWorkspaceTestRouter(t)
+	var taskIDs []string
+	for _, prompt := range []string{"a lighthouse", "fail"} {
+		request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"sora-2","prompt":"`+prompt+`","seconds":4}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "http://workspace.example")
+		request.Header.Set("Authorization", "Bearer browser-session-secret")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var receipt struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &receipt))
+		require.NotEmpty(t, receipt.ID)
+		taskIDs = append(taskIDs, receipt.ID)
+	}
+	assert.Equal(t, int32(2), calls.Load())
+	var owner model.User
+	require.NoError(t, db.First(&owner, 7).Error)
+	wantCharge := common.QuotaRound(4 * 0.01 * common.QuotaPerUnit)
+	assert.Equal(t, 1_000_000-wantCharge, owner.Quota, "one successful task is charged once; failed completion returns its reservation")
+	var token model.Token
+	require.NoError(t, db.First(&token, 11).Error)
+	assert.Equal(t, 123456, token.RemainQuota)
+	var tasks []model.Task
+	require.NoError(t, db.Order("id ASC").Find(&tasks).Error)
+	require.Len(t, tasks, 2)
+	assert.Equal(t, "a lighthouse", tasks[0].Properties.Input)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), tasks[0].Status)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), tasks[1].Status)
+	assert.Zero(t, tasks[1].Quota)
+	for _, task := range tasks {
+		assert.Zero(t, task.PrivateData.TokenId)
+		assert.Equal(t, "wallet", task.PrivateData.BillingSource)
+	}
+	require.NoError(t, db.Create(&model.Task{UserId: 8, TaskID: "other-user-video", Action: constant.TaskActionTextToVideo, Status: model.TaskStatusSuccess}).Error)
+	require.NoError(t, db.Create(&model.Task{UserId: 7, TaskID: "owner-image", Action: "image_generation", Status: model.TaskStatusSuccess}).Error)
+	for range 2 {
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/tasks?p=1&page_size=10", nil))
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var history struct {
+			Data struct {
+				Total int           `json:"total"`
+				Items []dto.TaskDto `json:"items"`
+			} `json:"data"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &history))
+		assert.Equal(t, 2, history.Data.Total)
+		for _, task := range history.Data.Items {
+			assert.Equal(t, 7, task.UserId)
+			assert.JSONEq(t, "null", string(task.Data))
+			assert.Nil(t, task.AdminInfo)
+			assert.Zero(t, task.ChannelId)
+		}
+	}
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/tasks/other-user-video/artifacts", nil))
+	assert.Equal(t, http.StatusNotFound, response.Code, "root role must not grant another user's result through workspace")
+
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/tasks/other-user-video/artifacts/video/content", nil))
+	assert.Equal(t, http.StatusNotFound, response.Code, "content must enforce owner scope for administrators")
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/tasks/"+taskIDs[0]+"/artifacts", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "/api/video-workspace/tasks/"+taskIDs[0]+"/artifacts/video/content")
+	assert.NotContains(t, response.Body.String(), "access=")
+	assert.NotContains(t, response.Body.String(), "cdn.example")
+	allowPrivateTaskMediaTest(t)
+	response = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/video-workspace/tasks/"+taskIDs[0]+"/artifacts/video/content", nil)
+	request.Header.Set("Authorization", "Bearer browser-session-secret")
+	engine.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "test-video-content", response.Body.String())
+	assert.Equal(t, "video/mp4", response.Header().Get("Content-Type"))
+	assert.Equal(t, "same-origin", response.Header().Get("Cross-Origin-Resource-Policy"))
+	assert.NotContains(t, response.Body.String(), "local-test-channel-key")
+	assert.NotContains(t, response.Header().Get("Authorization"), "local-test-channel-key")
+	require.NoError(t, db.First(&owner, 7).Error)
+	assert.Equal(t, 1_000_000-wantCharge, owner.Quota, "history polling never charges")
+	var logs int64
+	require.NoError(t, db.Model(&model.Log{}).Where("user_id = ?", 7).Count(&logs).Error)
+	assert.Equal(t, int64(2), logs)
+}
+
+func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
+	db, engine, calls := videoWorkspaceTestRouter(t)
+	for _, tc := range []struct {
+		name, body, origin string
+		status             int
+	}{
+		{"foreign origin", `{"model":"sora-2","prompt":"test"}`, "https://foreign.example", 403},
+		{"missing origin", `{"model":"sora-2","prompt":"test"}`, "", 403},
+		{"missing channel", `{"model":"missing","prompt":"test"}`, "http://workspace.example", 400},
+		{"negative duration", `{"model":"sora-2","prompt":"test","seconds":-4}`, "http://workspace.example", 400},
+		{"oversized duration", `{"model":"sora-2","prompt":"test","seconds":3601}`, "http://workspace.example", 400},
+		{"fractional duration", `{"model":"sora-2","prompt":"test","seconds":4.5}`, "http://workspace.example", 400},
+		{"unsupported size", `{"model":"sora-2","prompt":"test","size":"1792x1024"}`, "http://workspace.example", 400},
+		{"metadata bypass", `{"model":"sora-2","prompt":"test","metadata":{"duration":9999}}`, "http://workspace.example", 400},
+		{"group bypass", `{"model":"sora-2","prompt":"test","group":"vip"}`, "http://workspace.example", 400},
+		{"empty prompt", `{"model":"sora-2","prompt":" "}`, "http://workspace.example", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, req)
+			assert.Equal(t, tc.status, response.Code, response.Body.String())
+		})
+	}
+	for _, valid := range []bool{false, true} {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "sora-2"))
+		require.NoError(t, writer.WriteField("prompt", "uploaded image"))
+		part, err := writer.CreateFormFile("input_reference", "reference.png")
+		require.NoError(t, err)
+		if valid {
+			require.NoError(t, png.Encode(part, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+		} else {
+			_, err = part.Write([]byte("fake image"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, writer.Close())
+		req := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Origin", "http://workspace.example")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, req)
+		if valid {
+			assert.Equal(t, 200, response.Code, response.Body.String())
+		} else {
+			assert.Equal(t, 400, response.Code, response.Body.String())
+		}
+	}
+	assert.Equal(t, int32(1), calls.Load(), "only validated input reaches the provider")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.Equal(t, 200, response.Code, response.Body.String())
+	var catalog struct {
+		Data struct {
+			Models []videoWorkspaceModel `json:"models"`
+			Quota  int                   `json:"quota"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	require.Len(t, catalog.Data.Models, 1)
+	assert.True(t, catalog.Data.Models[0].SupportsImage)
+	require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "sora-2").Update("status", common.ChannelStatusManuallyDisabled).Error)
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	assert.Empty(t, catalog.Data.Models)
+}
+
+func TestVideoWorkspaceRequiresLiveSessionIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		userID  int
+		session string
+		version int64
+		pat     bool
+		want    int
+	}{
+		{"anonymous", 0, "", 0, false, 401}, {"api token", 7, "", 0, false, 401}, {"personal access token", 7, "session", 1, true, 401}, {"missing session version", 7, "session", 0, false, 401}, {"browser session", 7, "session", 1, false, 204},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.GET("/", func(c *gin.Context) {
+				c.Set("id", tc.userID)
+				c.Set("session_id", tc.session)
+				c.Set("auth_version", tc.version)
+				c.Set("session_version", tc.version)
+				c.Set("use_access_token", tc.pat)
+			}, VideoWorkspaceSession, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+			assert.Equal(t, tc.want, response.Code)
+		})
+	}
+	c := taskSubmissionTestContext()
+	c.Set(constant.ContextKeyVideoWorkspace, true)
+	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "video_workspace_single_attempt", Source: "system"}, decideTaskRetry(c, &dto.TaskError{StatusCode: 503}, 3))
+}
+
+func TestVideoWorkspaceRejectsExpiredAndRevokedSessions(t *testing.T) {
+	db, _, calls := videoWorkspaceTestRouter(t)
+	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
+	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.UserSession{})) })
+	oldSecret := common.SessionSecret
+	common.SessionSecret = "video-workspace-test-session-secret"
+	t.Cleanup(func() { common.SessionSecret = oldSecret })
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 7).Update("auth_version", 1).Error)
+	session := model.UserSession{SID: "workspace-test-session", UserID: 7, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: strings.Repeat("a", 64), LoginMethod: "password", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	require.NoError(t, db.Create(&session).Error)
+	access, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: 7, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1})
+	require.NoError(t, err)
+	engine := gin.New()
+	engine.GET("/models", middleware.UserAuth(), VideoWorkspaceSession, GetVideoWorkspaceModels)
+	for _, tc := range []struct {
+		name    string
+		expires int64
+		status  string
+		want    int
+	}{
+		{"active", time.Now().Add(time.Hour).Unix(), model.UserSessionStatusActive, 200},
+		{"expired", time.Now().Add(-time.Minute).Unix(), model.UserSessionStatusActive, 401},
+		{"revoked", time.Now().Add(time.Hour).Unix(), model.UserSessionStatusRevoked, 401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, db.Model(&model.UserSession{}).Where("sid = ?", session.SID).Updates(map[string]any{"expires_at": tc.expires, "status": tc.status}).Error)
+			req := httptest.NewRequest(http.MethodGet, "/models", nil)
+			req.Header.Set("Authorization", "Bearer "+access)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, req)
+			assert.Equal(t, tc.want, response.Code, response.Body.String())
+		})
+	}
+	assert.Zero(t, calls.Load())
+}
+
+func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
+	db, engine, _ := videoWorkspaceTestRouter(t)
+	supported := []string{"doubao-seedance-1-0-pro-250528", "doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615", "doubao-seedance-2-5-260628"}
+	names := append(append([]string{}, supported...), "doubao-seedance-1-0-lite-i2v")
+	modes, expressions := map[string]string{}, map[string]string{}
+	for _, name := range names {
+		require.Len(t, pluginruntime.DefaultRegistry.Generation().LookupEndpointCandidates(http.MethodPost, "/v1/videos", name), 1)
+		modes[name], expressions[name] = "tiered_expr", `tier("video", u("tokens") * 0.01)`
+	}
+	withTieredBillingConfig(t, modes, expressions)
+	require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "sora-2").Update("status", common.ChannelStatusManuallyDisabled).Error)
+	settings := `{"task_plugin_key":"doubao"}`
+	channel := model.Channel{Name: "doubao-capabilities", Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Group: "default", Models: strings.Join(names, ","), Setting: &settings}
+	require.NoError(t, db.Create(&channel).Error)
+	for _, name := range names {
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: channel.Id, Enabled: true}).Error)
+	}
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var catalog struct {
+		Data struct {
+			Models []videoWorkspaceModel `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	var actual []string
+	for _, item := range catalog.Data.Models {
+		actual = append(actual, item.ID)
+		assert.False(t, item.SupportsImage, "Doubao uploads are unsupported by the current adapter")
+	}
+	assert.ElementsMatch(t, supported, actual, "the image-only model must not be offered without an image input")
+}
+
+func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
+	db, engine, calls := videoWorkspaceTestRouter(t)
+	cases := []struct {
+		name       string
+		maxSeconds int
+		maxPrompt  int
+		sizes      []string
+	}{
+		{"Sd-2.0满血933", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.0fast", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.5", 30, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
+		{"Sd-2.0mini", 15, 2000, []string{"16:9", "9:16", "1:1"}},
+	}
+	names := []string{"minmax-h3", "wan-3.0"}
+	for _, tc := range cases {
+		names = append(names, tc.name)
+	}
+	modes, expressions := map[string]string{}, map[string]string{}
+	for _, name := range names {
+		modes[name], expressions[name] = "tiered_expr", `tier("video", u("seconds") * 0.01)`
+	}
+	withTieredBillingConfig(t, modes, expressions)
+	require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "sora-2").Update("status", common.ChannelStatusManuallyDisabled).Error)
+	settings := `{"task_plugin_key":"mengwuxian"}`
+	channel := model.Channel{Name: "mengwuxian-capabilities", Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Group: "default", Models: strings.Join(names, ","), Setting: &settings}
+	require.NoError(t, db.Create(&channel).Error)
+	for _, name := range names {
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: channel.Id, Enabled: true}).Error)
+	}
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var catalog struct {
+		Data struct {
+			Models []videoWorkspaceModel `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	require.Len(t, catalog.Data.Models, len(cases), "image-required and unavailable models must not appear")
+	byModel := make(map[string]videoWorkspaceModel, len(catalog.Data.Models))
+	for _, item := range catalog.Data.Models {
+		byModel[item.ID] = item
+		assert.True(t, item.SupportsImage)
+		assert.Equal(t, int64(10<<20), item.MaxImageBytes)
+		assert.Equal(t, []string{"image/png", "image/jpeg", "image/webp"}, item.SupportedImageTypes)
+	}
+	for _, tc := range cases {
+		item, found := byModel[tc.name]
+		require.True(t, found, tc.name)
+		wantDurations := make([]int, tc.maxSeconds-3)
+		for i := range wantDurations {
+			wantDurations[i] = i + 4
+		}
+		assert.Equal(t, wantDurations, item.Durations, tc.name)
+		assert.Equal(t, tc.sizes, item.Sizes, tc.name)
+		assert.Equal(t, tc.maxPrompt, item.MaxPromptLength, tc.name)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"Sd-2.0mini","prompt":"`+strings.Repeat("画", 2001)+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://workspace.example")
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "Prompt exceeds the selected model limit")
+	assert.Zero(t, calls.Load(), "overlong prompts must fail before upstream submission")
+}
+
+func TestVideoWorkspaceProviderOnlyPricing(t *testing.T) {
+	db, engine, calls := videoWorkspaceTestRouter(t)
+	withSelfUseModeDisabled(t)
+	oldPrices, oldRatios := ratio_setting.ModelPrice2JSONString(), ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(oldRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+	withTieredBillingConfig(t, map[string]string{"sora-2": "ratio"}, map[string]string{})
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"billing_setting.plugin_billing_expr": `{"sora::sora-2":"tier(\"video\", u(\"seconds\") * 0.02)"}`}))
+	require.False(t, helper.HasModelBillingConfig("sora-2"), "fixture has only a provider expression")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var catalog struct {
+		Data struct {
+			Models []videoWorkspaceModel `json:"models"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+	require.Len(t, catalog.Data.Models, 1, "a configured provider expression is valid billing configuration")
+	request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"sora-2","prompt":"provider-priced video","seconds":4}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://workspace.example")
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var owner model.User
+	require.NoError(t, db.First(&owner, 7).Error)
+	assert.Equal(t, 1_000_000-common.QuotaRound(4*0.02*common.QuotaPerUnit), owner.Quota)
+	assert.Equal(t, int32(1), calls.Load())
 }

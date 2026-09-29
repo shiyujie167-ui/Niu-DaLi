@@ -27,7 +27,7 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
@@ -53,6 +53,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -69,6 +71,10 @@ import {
   resolveTaskPreviewMode,
   shouldLoadTaskArtifacts,
 } from '../lib/task-artifacts'
+import {
+  useTaskMediaUrl,
+  type TaskMediaLoader,
+} from '../lib/use-task-media-url'
 import type { TaskArtifact, TaskArtifactType, TaskLog } from '../types'
 import { AudioPreviewDialog } from './dialogs/audio-preview-dialog'
 
@@ -100,13 +106,25 @@ function artifactTypeLabel(type: TaskArtifactType): string {
 
 // Task lists no longer carry the persisted snapshot, so the legacy Suno clip
 // list is fetched through the artifacts endpoint when the preview opens.
-function LegacyAudioPreview(props: { taskId: string }) {
+interface ArtifactSourceProps {
+  loadArtifacts?: typeof getTaskArtifacts
+  artifactQueryKey?: string
+  loadMedia?: TaskMediaLoader
+}
+
+function LegacyAudioPreview(props: { taskId: string } & ArtifactSourceProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const artifactsQuery = useQuery({
-    queryKey: ['usage-logs', 'task-artifacts', props.taskId],
+    queryKey: [
+      props.artifactQueryKey ?? 'usage-logs',
+      'task-artifacts',
+      props.taskId,
+    ],
     queryFn: async () =>
-      requireServerSuccess(await getTaskArtifacts(props.taskId)),
+      requireServerSuccess(
+        await (props.loadArtifacts ?? getTaskArtifacts)(props.taskId)
+      ),
     enabled: open,
     retry: false,
     staleTime: 30_000,
@@ -206,10 +224,18 @@ function MediaFailure(props: { onRetry: () => void }) {
   )
 }
 
-function TaskArtifactCard(props: { artifact: TaskArtifact }) {
+function TaskArtifactCard(props: {
+  artifact: TaskArtifact
+  loadMedia?: TaskMediaLoader
+}) {
   const { t } = useTranslation()
   const [mediaFailed, setMediaFailed] = useState(false)
   const [mediaRevision, setMediaRevision] = useState(0)
+  const media = useTaskMediaUrl(
+    props.artifact.content_url,
+    mediaRevision,
+    props.loadMedia
+  )
   const icon = artifactIcon(props.artifact.type)
   const isVisualArtifact =
     props.artifact.type === 'image' || props.artifact.type === 'video'
@@ -224,7 +250,7 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
       <HugeiconsIcon icon={icon} className='size-6' strokeWidth={1.5} />
     </div>
   )
-  if (mediaFailed) {
+  if (mediaFailed || media.failed) {
     cardContent = (
       <MediaFailure
         onRetry={() => {
@@ -233,12 +259,18 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
         }}
       />
     )
-  } else if (props.artifact.type !== 'file') {
+  } else if (media.loading) {
+    cardContent = (
+      <div aria-label={t('Loading...')}>
+        <Skeleton className='aspect-video min-h-48 w-full rounded-xl' />
+      </div>
+    )
+  } else if (props.artifact.type !== 'file' && media.url) {
     cardContent = (
       <ArtifactMedia
         key={mediaRevision}
         artifact={props.artifact}
-        mediaUrl={props.artifact.content_url}
+        mediaUrl={media.url}
         onError={() => setMediaFailed(true)}
       />
     )
@@ -275,9 +307,10 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
           variant='outline'
           size='sm'
           nativeButton={false}
+          disabled={!media.url}
           render={
             <a
-              href={props.artifact.content_url}
+              href={media.url}
               download={props.artifact.key}
               target='_blank'
               rel='noopener noreferrer'
@@ -296,7 +329,7 @@ function TaskArtifactCard(props: { artifact: TaskArtifact }) {
   )
 }
 
-interface TaskArtifactsProps {
+interface TaskArtifactsProps extends ArtifactSourceProps {
   taskId: string
   enabled: boolean
   emptyContent?: (legacyContentUrl?: string) => React.ReactNode
@@ -304,10 +337,18 @@ interface TaskArtifactsProps {
 
 function TaskArtifacts(props: TaskArtifactsProps) {
   const { t } = useTranslation()
+  const artifactSelectId = useId()
+  const [selectedKey, setSelectedKey] = useState('')
   const artifactsQuery = useQuery({
-    queryKey: ['usage-logs', 'task-artifacts', props.taskId],
+    queryKey: [
+      props.artifactQueryKey ?? 'usage-logs',
+      'task-artifacts',
+      props.taskId,
+    ],
     queryFn: async () =>
-      requireServerSuccess(await getTaskArtifacts(props.taskId)),
+      requireServerSuccess(
+        await (props.loadArtifacts ?? getTaskArtifacts)(props.taskId)
+      ),
     enabled: props.enabled,
     retry: false,
     staleTime: 30_000,
@@ -361,6 +402,37 @@ function TaskArtifacts(props: TaskArtifactsProps) {
     )
   }
 
+  if (props.loadMedia) {
+    const artifacts = artifactsQuery.data.artifacts
+    const artifact =
+      artifacts.find((item) => item.key === selectedKey) ?? artifacts[0]
+    return (
+      <div className='space-y-3'>
+        {artifacts.length > 1 && (
+          <Field>
+            <FieldLabel htmlFor={artifactSelectId}>{t('Artifacts')}</FieldLabel>
+            <NativeSelect
+              id={artifactSelectId}
+              value={artifact.key}
+              onChange={(event) => setSelectedKey(event.target.value)}
+            >
+              {artifacts.map((item) => (
+                <NativeSelectOption key={item.key} value={item.key}>
+                  {item.key}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
+        <TaskArtifactCard
+          key={artifact.key}
+          artifact={artifact}
+          loadMedia={props.loadMedia}
+        />
+      </div>
+    )
+  }
+
   return (
     <div
       className={cn(
@@ -390,14 +462,24 @@ function EmptyTaskArtifacts() {
   )
 }
 
-function LegacyTaskArtifacts(props: { legacyContentUrl?: string }) {
+function LegacyTaskArtifacts(props: {
+  legacyContentUrl?: string
+  loadMedia?: TaskMediaLoader
+}) {
   if (props.legacyContentUrl) {
-    return <LegacyVideoMedia contentUrl={props.legacyContentUrl} />
+    return (
+      <LegacyVideoMedia
+        contentUrl={props.legacyContentUrl}
+        loadMedia={props.loadMedia}
+      />
+    )
   }
   return <EmptyTaskArtifacts />
 }
 
-export function TaskArtifactsCell(props: { log: TaskLog }) {
+export function TaskArtifactsCell(
+  props: { log: TaskLog } & ArtifactSourceProps
+) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const previewMode = resolveTaskPreviewMode(props.log)
@@ -426,7 +508,13 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
     return <span className='text-muted-foreground/60 text-xs'>-</span>
   }
   if (previewMode === 'legacy-suno') {
-    return <LegacyAudioPreview taskId={props.log.task_id} />
+    return (
+      <LegacyAudioPreview
+        taskId={props.log.task_id}
+        loadArtifacts={props.loadArtifacts}
+        artifactQueryKey={props.artifactQueryKey}
+      />
+    )
   }
 
   return (
@@ -480,9 +568,15 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
       >
         <TaskArtifacts
           taskId={props.log.task_id}
+          loadArtifacts={props.loadArtifacts}
+          artifactQueryKey={props.artifactQueryKey}
+          loadMedia={props.loadMedia}
           enabled={shouldLoadTaskArtifacts(props.log, open)}
           emptyContent={(legacyContentUrl) => (
-            <LegacyTaskArtifacts legacyContentUrl={legacyContentUrl} />
+            <LegacyTaskArtifacts
+              legacyContentUrl={legacyContentUrl}
+              loadMedia={props.loadMedia}
+            />
           )}
         />
       </Dialog>
@@ -492,13 +586,28 @@ export function TaskArtifactsCell(props: { log: TaskLog }) {
 
 interface LegacyVideoMediaProps {
   contentUrl: string
+  loadMedia?: TaskMediaLoader
 }
 
 function LegacyVideoMedia(props: LegacyVideoMediaProps) {
+  const { t } = useTranslation()
   const [mediaFailed, setMediaFailed] = useState(false)
   const [mediaRevision, setMediaRevision] = useState(0)
 
-  return mediaFailed ? (
+  const media = useTaskMediaUrl(
+    props.contentUrl,
+    mediaRevision,
+    props.loadMedia
+  )
+  if (media.loading) {
+    return (
+      <div aria-label={t('Loading...')}>
+        <Skeleton className='aspect-video min-h-48 w-full rounded-xl' />
+      </div>
+    )
+  }
+
+  return mediaFailed || media.failed ? (
     <MediaFailure
       onRetry={() => {
         setMediaFailed(false)
@@ -506,13 +615,35 @@ function LegacyVideoMedia(props: LegacyVideoMediaProps) {
       }}
     />
   ) : (
-    <video
-      key={mediaRevision}
-      src={props.contentUrl}
-      controls
-      preload='metadata'
-      className='max-h-[60vh] w-full rounded-md bg-black'
-      onError={() => setMediaFailed(true)}
-    />
+    <div className='space-y-3'>
+      <video
+        key={mediaRevision}
+        src={media.url}
+        controls
+        preload='metadata'
+        className='max-h-[60vh] w-full rounded-md bg-black'
+        onError={() => setMediaFailed(true)}
+      />
+      <Button
+        variant='outline'
+        size='sm'
+        nativeButton={false}
+        render={
+          <a
+            href={media.url}
+            download='video.mp4'
+            target='_blank'
+            rel='noopener noreferrer'
+          />
+        }
+      >
+        <HugeiconsIcon
+          icon={Download01Icon}
+          strokeWidth={2}
+          data-icon='inline-start'
+        />
+        {t('Download')}
+      </Button>
+    </div>
   )
 }
