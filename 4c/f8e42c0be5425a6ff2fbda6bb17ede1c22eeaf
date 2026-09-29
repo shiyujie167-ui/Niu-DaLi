@@ -1,0 +1,38 @@
+web/src/features/home/components/sections/hero.tsx
+  s_e7ca0af6cb874b::t_887b089f51f4df 29
+  s_e7ca0af6cb874b::t_255d5861a4544c 47-55
+web/src/features/auth/forgot-password/index.tsx
+  s_e7ca0af6cb874b::t_36d93b619fe1ef 43-54
+  s_e7ca0af6cb874b::t_f8ff8f2bff5e61 22-23,25,30
+web/src/features/home/components/sections/cta.tsx
+  s_e7ca0af6cb874b::t_5892b5d845578c 26-27
+  s_e7ca0af6cb874b::t_b26894e682a04d 38-47
+web/src/features/auth/lib/self-registration.ts
+  s_e7ca0af6cb874b::t_48e2bb65deeb77 1-36
+web/src/features/auth/sign-in/index.tsx
+  s_e7ca0af6cb874b::t_7bb48622d6522d 41-52
+  s_e7ca0af6cb874b::t_e14d000204e72b 26
+web/src/features/auth/lib/__tests__/self-registration.test.ts
+  s_e7ca0af6cb874b::t_069aa5bbafca11 1-37
+web/src/routes/(auth)/sign-up.tsx
+  s_e7ca0af6cb874b::t_715faa08fcfc89 21,23,28,35-42
+web/src/features/home/__tests__/storefront.test.tsx
+  s_e7ca0af6cb874b::t_a84d11b65b28cf 29,32,34-37,41-43,45-50
+  s_e7ca0af6cb874b::t_844fcd7552a1c1 78,88,93-95,98-99,101-107,109-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.45-trip",
+  "base_commit_sha": "4cf8e42c0be5425a6ff2fbda6bb17ede1c22eeaf",
+  "prompts": {},
+  "sessions": {
+    "s_e7ca0af6cb874b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ad85d01c-e5f6-4e97-b9c9-62041ad61029",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "leileihuang <leileihuang@trip.com>"
+    }
+  }
+}
