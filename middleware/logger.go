@@ -13,6 +13,11 @@ const RouteTagKey = "route_tag"
 func RouteTag(tag string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set(RouteTagKey, tag)
+		if tag == "relay" {
+			writer := &relayPrivacyWriter{ResponseWriter: c.Writer, ctx: c, localHeaders: c.Writer.Header().Clone()}
+			c.Writer = writer
+			defer writer.finish()
+		}
 		c.Next()
 	}
 }

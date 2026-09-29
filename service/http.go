@@ -24,10 +24,10 @@ func CloseResponseBodyGracefully(httpResponse *http.Response) {
 }
 
 // ShouldCopyUpstreamHeader checks whether a given upstream response header
-// should be copied to the client response. It returns false for Content-Length
-// (managed separately) and X-Oneapi-Request-Id (to preserve the local instance
-// ID). When the upstream header is X-Oneapi-Request-Id, the value is captured
-// into the Gin context for later logging.
+// should be copied to the client response. Only protocol headers are allowed;
+// infrastructure headers, cookies and upstream CORS policy remain private.
+// Content-Length is managed separately. The upstream request ID is captured
+// in the Gin context for operator diagnostics without replacing the local ID.
 func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 	if strings.EqualFold(k, "Content-Length") {
 		return false
@@ -38,7 +38,7 @@ func ShouldCopyUpstreamHeader(c *gin.Context, k string, v []string) bool {
 		}
 		return false
 	}
-	return true
+	return len(v) > 0 && common.RelayProtocolHeader(k)
 }
 
 func IOCopyBytesGracefully(c *gin.Context, src *http.Response, data []byte) {
