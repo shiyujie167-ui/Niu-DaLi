@@ -402,12 +402,12 @@ func newResponsesWSBillingTest(t *testing.T, expression string, handle func(*web
 		require.NoError(t, model.DB.Delete(channel).Error)
 	})
 	engine := gin.New()
-	engine.GET("/v1/responses", middleware.TokenAuth(), func(c *gin.Context) {
+	engine.GET("/v1/responses", middleware.RouteTag("relay"), middleware.TokenAuth(), func(c *gin.Context) {
 		defer close(fixture.done)
 		c.Set(common.RequestIdKey, "responses-ws-billing")
 		ResponsesWebSocket(c)
 	})
-	engine.POST("/v1/responses", middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
+	engine.POST("/v1/responses", middleware.RouteTag("relay"), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), middleware.Distribute(), func(c *gin.Context) {
 		defer func() { fixture.httpDone <- struct{}{} }()
 		c.Set(common.RequestIdKey, "responses-http-billing")
 		Relay(c, types.RelayFormatOpenAIResponses)
@@ -705,7 +705,14 @@ func TestResponsesWebSocketDialsNativeResponsesChannelTypes(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, response.Body.Close())
 			assert.Equal(t, http.StatusOK, response.StatusCode)
-			assert.Contains(t, string(body), terminal)
+			if tc.name == "failed-null-fixed" || tc.name == "error-after-created" || tc.name == "business-error-after-created" {
+				assert.NotContains(t, string(body), "sensitive upstream detail")
+				assert.NotContains(t, string(body), "Internal server error")
+				assert.NotContains(t, string(body), "Input too long")
+				assert.Contains(t, string(body), "request id: responses-http-billing")
+			} else {
+				assert.Contains(t, string(body), terminal)
+			}
 			select {
 			case <-fixture.httpDone:
 			case <-time.After(3 * time.Second):
@@ -848,7 +855,8 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 			assert.Equal(t, float64(tc.status), rejection["status"])
 			rejectionError, _ := rejection["error"].(map[string]any)
 			assert.Equal(t, tc.wantType, rejectionError["type"])
-			assert.Equal(t, tc.wantMessage, rejectionError["message"])
+			assert.NotEqual(t, tc.wantMessage, rejectionError["message"])
+			assert.Contains(t, rejectionError["message"], "request id: responses-ws-billing-ws-0")
 			assert.Equal(t, 2000, <-preConsumed, "the rejected request reserved quota before contacting upstream")
 			deadline := time.NewTimer(3 * time.Second)
 			defer deadline.Stop()
@@ -939,13 +947,20 @@ func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, response.Body.Close())
 					assert.Equal(t, http.StatusOK, response.StatusCode)
-					assert.Contains(t, string(body), terminal)
+					if tc.name == "failed-null-fixed" || tc.name == "error-after-created" || tc.name == "business-error-after-created" {
+						assert.NotContains(t, string(body), "sensitive upstream detail")
+						assert.NotContains(t, string(body), "Internal server error")
+						assert.NotContains(t, string(body), "Input too long")
+						assert.Contains(t, string(body), "request id: responses-http-billing")
+					} else {
+						assert.Contains(t, string(body), terminal)
+					}
 				} else {
 					require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","stream_id":"planner","model":"ws-billing","input":"hi","max_output_tokens":1}`)))
 					for _, expected := range events {
 						actual, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 						require.NoError(t, err)
-						assert.JSONEq(t, expected, string(actual), "upstream frames must be delivered once and unchanged")
+						assertPublicResponsesEvent(t, expected, actual)
 					}
 				}
 				quotas := []int{1000}
@@ -1103,7 +1118,7 @@ func TestResponsesWebSocketAmbiguousControlErrorClosesAndSettlesOnce(t *testing.
 	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.cancel","response_id":"active"}`)))
 	body, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 	require.NoError(t, err)
-	assert.JSONEq(t, terminal, string(body))
+	assertPublicResponsesEvent(t, terminal, body)
 	_, _, err = fixture.client.ReadMessage()
 	require.Error(t, err, "an unattributed error must close the connection instead of remaining busy")
 	var timeout net.Error
@@ -1262,7 +1277,7 @@ func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *
 	assert.Equal(t, "response.created", readResponsesWSTestEvent(t, fixture.client)["type"])
 	stray, err := common.Marshal(readResponsesWSTestEvent(t, fixture.client))
 	require.NoError(t, err)
-	assert.JSONEq(t, strayError, string(stray))
+	assertPublicResponsesEvent(t, strayError, stray)
 	assert.Equal(t, "response.completed", readResponsesWSTestEvent(t, fixture.client)["type"])
 	fixture.closeAndWait(t)
 	assertResponsesWSAccounting(t, fixture, []int{1000})
@@ -1319,4 +1334,29 @@ func TestResponsesWebSocketPreRoutingRejectionsFollowHealthClassification(t *tes
 			assert.Zero(t, successes)
 		})
 	}
+}
+
+// Error text is private; response identity, status, usage and retry/cancel codes
+// remain part of the public WebSocket contract.
+func assertPublicResponsesEvent(t *testing.T, upstream string, actual []byte) {
+	t.Helper()
+	var want, got map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(upstream, &want))
+	require.NoError(t, common.Unmarshal(actual, &got))
+	wantEnvelope, gotEnvelope := want, got
+	if response, ok := want["response"].(map[string]any); ok {
+		wantEnvelope = response
+		var present bool
+		gotEnvelope, present = got["response"].(map[string]any)
+		require.True(t, present)
+	}
+	if original, ok := wantEnvelope["error"].(map[string]any); ok {
+		visible, ok := gotEnvelope["error"].(map[string]any)
+		require.True(t, ok)
+		assert.Contains(t, visible["message"], "request id: responses-ws-billing")
+		assert.NotEqual(t, original["message"], visible["message"])
+		delete(original, "message")
+		delete(visible, "message")
+	}
+	assert.Equal(t, want, got, "protocol state and accounting fields must survive privacy filtering")
 }

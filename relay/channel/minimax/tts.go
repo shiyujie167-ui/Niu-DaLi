@@ -2,13 +2,13 @@ package minimax
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -118,7 +118,7 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 
 	// Parse response
 	var minimaxResp MiniMaxTTSResponse
-	if unmarshalErr := json.Unmarshal(body, &minimaxResp); unmarshalErr != nil {
+	if unmarshalErr := common.Unmarshal(body, &minimaxResp); unmarshalErr != nil {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("failed to unmarshal minimax TTS response: %w", unmarshalErr),
 			types.ErrorCodeBadResponseBody,
@@ -145,7 +145,27 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 	}
 
 	if strings.HasPrefix(minimaxResp.Data.Audio, "http") {
-		c.Redirect(http.StatusFound, minimaxResp.Data.Audio)
+		// Fetch through the existing SSRF-protected client; a redirect would
+		// expose the upstream host to the customer.
+		if fetchErr := service.ValidateSSRFProtectedFetchURL(minimaxResp.Data.Audio); fetchErr != nil {
+			return nil, types.NewErrorWithStatusCode(fmt.Errorf("audio download rejected: %w", fetchErr), types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
+		request, requestErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, minimaxResp.Data.Audio, nil)
+		if requestErr != nil {
+			return nil, types.NewErrorWithStatusCode(requestErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
+		audioResponse, downloadErr := service.GetSSRFProtectedHTTPClient().Do(request)
+		if downloadErr != nil {
+			return nil, types.NewErrorWithStatusCode(downloadErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
+		defer service.CloseResponseBodyGracefully(audioResponse)
+		if audioResponse.StatusCode != http.StatusOK {
+			return nil, types.NewErrorWithStatusCode(fmt.Errorf("audio download returned status %d", audioResponse.StatusCode), types.ErrorCodeBadResponse, http.StatusBadGateway)
+		}
+		c.Header("Content-Type", "audio/mpeg")
+		if _, copyErr := io.Copy(c.Writer, audioResponse.Body); copyErr != nil {
+			return nil, types.NewErrorWithStatusCode(copyErr, types.ErrorCodeReadResponseBodyFailed, http.StatusBadGateway)
+		}
 	} else {
 		// Handle hex-encoded audio data
 		audioData, decodeErr := hex.DecodeString(minimaxResp.Data.Audio)
