@@ -30,7 +30,7 @@ import { useHomePageContent } from './hooks'
 
 const NIU_DALI_HEADER_PROPS = {
   className: 'niu-dali-header-theme',
-  darkSurfaceUntilScrolled: true,
+  heroSurfaceUntilScrolled: true,
 } as const
 
 export function Home() {
