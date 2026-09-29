@@ -746,9 +746,33 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
-/* Niu Dali storefront: dark violet tokens scoped away from the console. */
+/* Niu Dali storefront: violet tokens scoped away from the console.
+ * Light is the default; `.dark` on <html> switches to the dark set, so the
+ * storefront follows the same light / dark / system choice as other pages. */
 .niu-dali-home,
-.public-header-dark-surface {
+.public-header-hero-surface {
+  --background: oklch(0.985 0.006 295);
+  --foreground: oklch(0.2 0.035 291);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.035 291);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.035 291);
+  --primary: oklch(0.5 0.2 293);
+  --primary-foreground: oklch(0.99 0.004 295);
+  --secondary: oklch(0.955 0.016 295);
+  --secondary-foreground: oklch(0.26 0.045 291);
+  --muted: oklch(0.955 0.016 295);
+  --muted-foreground: oklch(0.47 0.04 295);
+  --accent: oklch(0.94 0.03 294);
+  --accent-foreground: oklch(0.2 0.035 291);
+  --border: oklch(0.9 0.02 294);
+  --input: oklch(0.86 0.025 294);
+  --ring: oklch(0.5 0.2 293);
+  color: var(--foreground);
+}
+
+.dark .niu-dali-home,
+.dark .public-header-hero-surface {
   --background: oklch(0.114 0.02 291.5);
   --foreground: oklch(0.975 0.013 295.4);
   --card: oklch(0.196 0.036 290.4);
@@ -766,7 +790,6 @@ For commercial licensing, please contact support@quantumnous.com
   --border: oklch(0.291 0.047 292 / 72%);
   --input: oklch(0.518 0.063 295.6);
   --ring: oklch(0.709 0.159 293.6);
-  color: var(--foreground);
 }
 
 .niu-dali-home {
@@ -775,9 +798,18 @@ For commercial licensing, please contact support@quantumnous.com
   --niu-hero-muted: var(--muted-foreground);
   --niu-action: oklch(0.541 0.247 293);
   --niu-action-hover: oklch(0.49 0.23 293);
+  --niu-action-foreground: oklch(0.99 0.004 295);
+  --niu-cyan: oklch(0.6 0.13 225);
+  --niu-control-border: oklch(0.62 0.06 294);
+  --niu-line: var(--border);
+  --niu-panel: oklch(1 0 0 / 82%);
+}
+
+.dark .niu-dali-home {
+  --niu-action-foreground: var(--foreground);
   --niu-cyan: oklch(0.76 0.14 220);
   --niu-control-border: oklch(0.518 0.063 295.6);
-  --niu-line: var(--border);
+  --niu-panel: oklch(0.196 0.036 290.4 / 88%);
 }
 
 .niu-dali-hero,
@@ -794,7 +826,7 @@ For commercial licensing, please contact support@quantumnous.com
 .niu-dali-kicker,
 .niu-dali-signal {
   border-color: var(--niu-line);
-  background-color: oklch(0.196 0.036 290.4 / 88%);
+  background-color: var(--niu-panel);
 }
 
 .niu-dali-eyebrow {
@@ -807,13 +839,13 @@ For commercial licensing, please contact support@quantumnous.com
 
 .niu-dali-status-dot {
   background-color: var(--niu-cyan);
-  box-shadow: 0 0 0 4px oklch(0.76 0.14 220 / 12%);
+  box-shadow: 0 0 0 4px color-mix(in oklch, var(--niu-cyan) 14%, transparent);
 }
 
 .niu-dali-primary-action {
   border-color: var(--niu-action);
   background-color: var(--niu-action);
-  color: var(--foreground);
+  color: var(--niu-action-foreground);
 }
 
 .niu-dali-primary-action:hover {

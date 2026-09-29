@@ -16,22 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { describe, expect, it } from 'vitest'
 
-import { About } from '@/features/about'
-import { parseHeaderNavModulesFromStatus } from '@/lib/nav-modules'
-import { statusQueryOptions } from '@/lib/status-query'
+import { isSelfRegistrationOpen } from '../self-registration'
 
-export const Route = createFileRoute('/about/')({
-  beforeLoad: async ({ context }) => {
-    // 「页头导航」关闭「关于」后，直接访问地址也回到首页。
-    // 状态读取失败时保持放行，关于页内容本身是公开的。
-    const status = await context.queryClient
-      .fetchQuery(statusQueryOptions)
-      .catch(() => null)
-    if (parseHeaderNavModulesFromStatus(status).about === false) {
-      throw redirect({ to: '/', replace: true })
-    }
-  },
-  component: About,
+describe('isSelfRegistrationOpen', () => {
+  it.each([
+    ['registration is enabled', { register_enabled: true }, true],
+    ['registration is disabled', { register_enabled: false }, false],
+    [
+      'self-use mode is enabled',
+      { register_enabled: true, self_use_mode_enabled: true },
+      false,
+    ],
+    ['the flag is missing from status', {}, true],
+    ['status is not loaded', null, true],
+  ])('returns the expected value when %s', (_case, status, expected) => {
+    expect(isSelfRegistrationOpen(status)).toBe(expected)
+  })
 })

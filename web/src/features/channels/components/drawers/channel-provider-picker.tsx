@@ -38,6 +38,7 @@ import { AutoGroupFlowBorder } from '@/features/keys/components/auto-group-visua
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useMediaQuery } from '@/hooks/use-media-query'
 import { resolveLocalizedText } from '@/lib/localized-text'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import type { TaskPluginOption } from '../../api'
 import {
@@ -70,6 +71,7 @@ type ChannelProviderPickerProps = {
 
 export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
   const { t, i18n } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const [search, setSearch] = useState('')
   const [selectedFilter, setSelectedFilter] = useState('all')
@@ -168,7 +170,7 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
             ? t(presentation.descriptionKey)
             : undefined,
           detail: presentation?.detailKey
-            ? t(presentation.detailKey)
+            ? t(presentation.detailKey, { systemName })
             : undefined,
           badge: presentation?.badge,
           extensionNames: extensions.map((plugin) => plugin.name).join(' · '),
@@ -190,6 +192,7 @@ export function ChannelProviderPicker(props: ChannelProviderPickerProps) {
     props.loading,
     props.failed,
     props.plugins,
+    systemName,
     t,
   ])
 

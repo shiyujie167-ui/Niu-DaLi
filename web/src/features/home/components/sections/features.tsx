@@ -33,6 +33,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 interface FeaturesProps {
   className?: string
@@ -40,6 +41,7 @@ interface FeaturesProps {
 
 export function Features(_props: FeaturesProps) {
   const { t } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const features = [
     {
       id: 'pricing',
@@ -65,7 +67,8 @@ export function Features(_props: FeaturesProps) {
       icon: LinkSquare01Icon,
       title: t('One key, more models'),
       description: t(
-        'Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.'
+        'Supports one-click configuration and perfectly adapts to {{systemName}} multi-protocol configuration.',
+        { systemName }
       ),
       preview: (
         <div className='flex flex-col gap-3'>

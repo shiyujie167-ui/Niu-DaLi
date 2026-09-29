@@ -126,6 +126,7 @@ import {
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   getAllModels,
@@ -405,6 +406,7 @@ export function ChannelMutateDrawer({
   currentRow,
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
+  const systemName = useSystemConfigStore((s) => s.config.systemName)
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -1124,7 +1126,8 @@ export function ChannelMutateDrawer({
     const timer = setTimeout(() => {
       toast.warning(
         t(
-          'Warning: Base URL should not end with /v1. New API will handle it automatically. This may cause request failures.'
+          'Warning: Base URL should not end with /v1. {{systemName}} will handle it automatically. This may cause request failures.',
+          { systemName }
         ),
         { duration: 5000 }
       )
@@ -4107,7 +4110,8 @@ export function ChannelMutateDrawer({
                     {currentType !== CHANNEL_TYPE_TASK_PLUGIN && (
                       <FormDescription>
                         {t(
-                          'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                          'Custom API base URL. For official channels, {{systemName}} has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.',
+                          { systemName }
                         )}
                       </FormDescription>
                     )}

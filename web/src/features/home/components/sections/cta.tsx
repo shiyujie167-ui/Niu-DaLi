@@ -33,7 +33,8 @@ interface CTAProps {
 export function CTA(props: CTAProps) {
   const { t } = useTranslation()
   const { logo } = useSystemConfig()
-  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-up'
+  // 与首屏按钮一致：访客从「开始使用」进入登录页
+  const primaryDestination = props.isAuthenticated ? '/wallet' : '/sign-in'
   const primaryLabel = props.isAuthenticated
     ? t('Open wallet')
     : t('Get Started')

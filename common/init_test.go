@@ -38,7 +38,7 @@ func TestInitRuntimeBrandDefaults(t *testing.T) {
 		SystemName = originalSystemName
 		Logo = originalLogo
 		Footer = originalFooter
-		SystemName = "New API"
+		SystemName = DefaultSystemName
 		Logo = ""
 		Footer = ""
 		t.Setenv("SYSTEM_NAME", "")
@@ -47,7 +47,7 @@ func TestInitRuntimeBrandDefaults(t *testing.T) {
 
 		initRuntimeBrandDefaults()
 
-		require.Equal(t, "New API", SystemName)
+		require.Equal(t, DefaultSystemName, SystemName)
 		require.Empty(t, Logo)
 		require.Empty(t, Footer)
 	})
