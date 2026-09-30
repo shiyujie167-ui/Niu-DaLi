@@ -617,6 +617,8 @@ func executeTaskSubmissionWith(
 	task := model.InitTask(result.Platform, relayInfo)
 	if c.GetBool(constant.ContextKeyVideoWorkspace) {
 		task.Properties.Input = c.GetString("video_workspace_prompt")
+		task.Properties.CanvasNodeID = c.GetString("video_workspace_canvas_node_id")
+		task.Properties.CanvasSubmissionID = c.GetString("video_workspace_submission_id")
 	}
 	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID

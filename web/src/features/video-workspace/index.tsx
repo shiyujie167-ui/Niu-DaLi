@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Video, Wallet } from 'lucide-react'
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -36,6 +36,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { getServerErrorMessage } from '@/lib/server-error-message'
@@ -46,12 +47,15 @@ import { VideoHistory } from './components/video-history'
 
 const CATALOG_QUERY_KEY = ['video-workspace', 'models']
 const HISTORY_QUERY_KEY = ['video-workspace', 'tasks']
+const VideoCanvas = lazy(() => import('./canvas'))
 
 export function VideoWorkspace() {
   const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 10 })
+  const [mode, setMode] = useState('standard')
+  const [canvasOpened, setCanvasOpened] = useState(false)
   const catalogQuery = useQuery({
     queryKey: CATALOG_QUERY_KEY,
     queryFn: getVideoModels,
@@ -108,63 +112,100 @@ export function VideoWorkspace() {
         </Button>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
-        <div className='mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start'>
-          <Card className='min-w-0'>
-            <CardHeader>
-              <CardTitle>{t('Create a video')}</CardTitle>
-              <CardDescription>
-                {t('Choose an available model and bring your idea to life.')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className='space-y-4'>
-              {catalogQuery.isPending && <LoadingState />}
-              {catalogQuery.isError && (
-                <ErrorState
-                  title={t('Failed to load video models')}
-                  description={getServerErrorMessage(catalogQuery.error)}
-                  onRetry={() => void catalogQuery.refetch()}
-                />
-              )}
-              {catalogQuery.isSuccess &&
-                catalogQuery.data.models.length === 0 && (
-                  <EmptyState
-                    icon={Video}
-                    title={t('No video channels available')}
-                    description={t(
-                      'Ask your administrator to configure a supported video channel and model pricing for your group.'
+        <Tabs
+          value={mode}
+          onValueChange={(value) => {
+            setMode(String(value))
+            if (value === 'canvas') setCanvasOpened(true)
+          }}
+          className='gap-4'
+        >
+          <TabsList aria-label={t('Video workspace mode')}>
+            <TabsTrigger value='standard'>{t('Standard')}</TabsTrigger>
+            <TabsTrigger value='canvas'>{t('Infinite canvas')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value='standard' keepMounted>
+            <div className='mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-start'>
+              <Card className='min-w-0'>
+                <CardHeader>
+                  <CardTitle>{t('Create a video')}</CardTitle>
+                  <CardDescription>
+                    {t(
+                      'Choose an available model and bring your idea to life.'
                     )}
-                    className='min-h-48'
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className='space-y-4'>
+                  {catalogQuery.isPending && <LoadingState />}
+                  {catalogQuery.isError && (
+                    <ErrorState
+                      title={t('Failed to load video models')}
+                      description={getServerErrorMessage(catalogQuery.error)}
+                      onRetry={() => void catalogQuery.refetch()}
+                    />
+                  )}
+                  {catalogQuery.isSuccess &&
+                    catalogQuery.data.models.length === 0 && (
+                      <EmptyState
+                        icon={Video}
+                        title={t('No video channels available')}
+                        description={t(
+                          'Ask your administrator to configure a supported video channel and model pricing for your group.'
+                        )}
+                        className='min-h-48'
+                      />
+                    )}
+                  {catalogQuery.isSuccess &&
+                    catalogQuery.data.models.length > 0 && (
+                      <VideoForm
+                        catalog={catalogQuery.data}
+                        pending={submitMutation.isPending}
+                        onSubmit={(submission) =>
+                          submitMutation.mutate(submission)
+                        }
+                      />
+                    )}
+                  {submitMutation.isError && (
+                    <Alert variant='destructive'>
+                      <AlertTitle>
+                        {t('Failed to submit video task')}
+                      </AlertTitle>
+                      <AlertDescription>
+                        <p>{getServerErrorMessage(submitMutation.error)}</p>
+                        <p>
+                          {t(
+                            'Check your video history before submitting again if the connection was interrupted.'
+                          )}
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
+              <VideoHistory
+                query={historyQuery}
+                pagination={pagination}
+                onPaginationChange={setPagination}
+              />
+            </div>
+          </TabsContent>
+          <TabsContent value='canvas' keepMounted>
+            {canvasOpened && (
+              <Suspense fallback={<LoadingState className='min-h-80' />}>
+                {catalogQuery.isError && (
+                  <ErrorState
+                    title={t('Failed to load video models')}
+                    description={getServerErrorMessage(catalogQuery.error)}
+                    onRetry={() => void catalogQuery.refetch()}
                   />
                 )}
-              {catalogQuery.isSuccess &&
-                catalogQuery.data.models.length > 0 && (
-                  <VideoForm
-                    catalog={catalogQuery.data}
-                    pending={submitMutation.isPending}
-                    onSubmit={(submission) => submitMutation.mutate(submission)}
-                  />
-                )}
-              {submitMutation.isError && (
-                <Alert variant='destructive'>
-                  <AlertTitle>{t('Failed to submit video task')}</AlertTitle>
-                  <AlertDescription>
-                    <p>{getServerErrorMessage(submitMutation.error)}</p>
-                    <p>
-                      {t(
-                        'Check your video history before submitting again if the connection was interrupted.'
-                      )}
-                    </p>
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
-          <VideoHistory
-            query={historyQuery}
-            pagination={pagination}
-            onPaginationChange={setPagination}
-          />
-        </div>
+                <VideoCanvas
+                  catalog={catalogQuery.data ?? { models: [], quota: 0 }}
+                />
+              </Suspense>
+            )}
+          </TabsContent>
+        </Tabs>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )
