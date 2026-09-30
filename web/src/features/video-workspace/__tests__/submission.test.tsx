@@ -20,6 +20,9 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi } from 'vitest'
 
+import { api } from '@/lib/api'
+
+import { createVideoTask } from '../api'
 import { VideoForm } from '../components/video-form'
 import type { VideoWorkspaceCatalog } from '../types'
 
@@ -45,7 +48,209 @@ const catalog: VideoWorkspaceCatalog = {
   ],
 }
 
+const resolutionCatalog: VideoWorkspaceCatalog = {
+  quota: 500000,
+  models: [
+    {
+      id: 'Sd-2.0满血933',
+      name: 'Sd-2.0满血933',
+      supports_image: false,
+      sizes: ['16:9', '9:16'],
+      resolutions: ['720p', '1080p', '4k'],
+      default_resolution: '720p',
+      max_prompt_length: 4000,
+    },
+    {
+      id: 'Sd-2.0mini',
+      name: 'Sd-2.0mini',
+      supports_image: false,
+      resolutions: ['480p', '720p'],
+      default_resolution: '480p',
+      max_prompt_length: 2000,
+    },
+    catalog.models[1],
+  ],
+}
+
 describe('video generation submission', () => {
+  test('selecting 4K sends the provider resolution and aspect ratio independently in the multipart request', async () => {
+    const user = userEvent.setup()
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        id: 'video-4k',
+        object: 'video',
+        model: 'Sd-2.0满血933',
+        status: 'queued',
+      },
+    })
+    render(
+      <VideoForm
+        catalog={resolutionCatalog}
+        pending={false}
+        onSubmit={createVideoTask}
+      />
+    )
+    const resolution = screen.getByRole('combobox', {
+      name: 'Video resolution',
+    })
+    expect(resolution).toHaveValue('720p')
+    expect(screen.getByRole('option', { name: '4K' })).toHaveValue('4k')
+    expect(screen.queryByRole('option', { name: '2K' })).not.toBeInTheDocument()
+    await user.selectOptions(resolution, '4k')
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Aspect ratio' }),
+      '9:16'
+    )
+    await user.type(
+      screen.getByRole('textbox', { name: 'Video prompt' }),
+      'A river at sunrise'
+    )
+    await user.click(screen.getByRole('button', { name: 'Generate video' }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    const payload = post.mock.calls[0][1] as FormData
+    expect(payload.get('resolution')).toBe('4k')
+    expect(payload.get('size')).toBe('9:16')
+    expect(payload.get('model')).toBe('Sd-2.0满血933')
+  })
+
+  test('switching models resets resolution to the supported default and clears it when unsupported', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <VideoForm
+        catalog={resolutionCatalog}
+        pending={false}
+        onSubmit={onSubmit}
+      />
+    )
+    await user.type(
+      screen.getByRole('textbox', { name: 'Video prompt' }),
+      'A river'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Video resolution' }),
+      '4k'
+    )
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Model' }),
+      'Sd-2.0mini'
+    )
+
+    expect(
+      screen.getByRole('combobox', { name: 'Video resolution' })
+    ).toHaveValue('480p')
+    expect(screen.queryByRole('option', { name: '4K' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Generate video' }))
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        model: 'Sd-2.0mini',
+        prompt: 'A river',
+        resolution: '480p',
+      })
+    )
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Model' }),
+      'text-video'
+    )
+    expect(
+      screen.queryByRole('combobox', { name: 'Video resolution' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Generate video' }))
+    expect(onSubmit).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        model: 'text-video',
+        prompt: 'A river',
+        resolution: undefined,
+      })
+    )
+  })
+
+  test.each([
+    { resolutions: ['720p', '1080p', '4k'], expected: '4k' },
+    { resolutions: ['720p', '1080p'], expected: '720p' },
+  ])(
+    'a catalog refresh with $resolutions keeps only a supported resolution',
+    async ({ resolutions, expected }) => {
+      const user = userEvent.setup()
+      const onSubmit = vi.fn()
+      const view = render(
+        <VideoForm
+          catalog={resolutionCatalog}
+          pending={false}
+          onSubmit={onSubmit}
+        />
+      )
+      await user.type(
+        screen.getByRole('textbox', { name: 'Video prompt' }),
+        'A river'
+      )
+      await user.selectOptions(
+        screen.getByRole('combobox', { name: 'Video resolution' }),
+        '4k'
+      )
+      view.rerender(
+        <VideoForm
+          catalog={{
+            quota: 400000,
+            models: [{ ...resolutionCatalog.models[0], resolutions }],
+          }}
+          pending={false}
+          onSubmit={onSubmit}
+        />
+      )
+      expect(
+        screen.getByRole('combobox', { name: 'Video resolution' })
+      ).toHaveValue(expected)
+      await user.click(screen.getByRole('button', { name: 'Generate video' }))
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ prompt: 'A river', resolution: expected })
+      )
+    }
+  )
+
+  test('a provider without an explicit default omits resolution unless the user chooses one', async () => {
+    const user = userEvent.setup()
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        id: 'video-default',
+        object: 'video',
+        model: 'Sd-2.0满血933',
+        status: 'queued',
+      },
+    })
+    render(
+      <VideoForm
+        catalog={{
+          ...resolutionCatalog,
+          models: [
+            { ...resolutionCatalog.models[0], default_resolution: undefined },
+          ],
+        }}
+        pending={false}
+        onSubmit={createVideoTask}
+      />
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Video resolution' })
+    ).toHaveValue('')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Video prompt' }),
+      'A river'
+    )
+    await user.click(screen.getByRole('button', { name: 'Generate video' }))
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect((post.mock.calls[0][1] as FormData).has('resolution')).toBe(false)
+  })
+
+  test('a pending submission disables the resolution selector', () => {
+    render(<VideoForm catalog={resolutionCatalog} pending onSubmit={vi.fn()} />)
+    expect(
+      screen.getByRole('combobox', { name: 'Video resolution' })
+    ).toBeDisabled()
+  })
+
   test('given a supported image and parameters, submits the selected model and trimmed prompt exactly once', async () => {
     const onSubmit = vi.fn()
     const user = userEvent.setup()
@@ -67,6 +272,7 @@ describe('video generation submission', () => {
       prompt: 'A river at sunrise',
       seconds: '8',
       size: '1280x720',
+      resolution: undefined,
       image,
     })
   })
@@ -104,6 +310,7 @@ describe('video generation submission', () => {
       prompt: 'A river at sunrise',
       seconds: undefined,
       size: undefined,
+      resolution: undefined,
       image: undefined,
     })
   })
@@ -143,6 +350,7 @@ describe('video generation submission', () => {
       prompt: 'A river at sunrise',
       seconds: undefined,
       size: undefined,
+      resolution: undefined,
       image: undefined,
     })
 
@@ -203,6 +411,7 @@ describe('video generation submission', () => {
       prompt: 'A river at sunrise',
       seconds: '8',
       size: '1920x1080',
+      resolution: undefined,
       image: undefined,
     })
   })
@@ -251,6 +460,7 @@ describe('video generation submission', () => {
       prompt: 'A river at sunrise',
       seconds: '8',
       size: '1280x720',
+      resolution: undefined,
       image,
     })
   })

@@ -24,6 +24,8 @@ export interface VideoWorkspaceModel {
   supports_image: boolean
   durations?: number[]
   sizes?: string[]
+  resolutions?: string[]
+  default_resolution?: string
   max_image_bytes?: number
   max_prompt_length: number
   supported_image_types?: string[]
@@ -53,5 +55,6 @@ export interface VideoSubmission {
   prompt: string
   seconds?: string
   size?: string
+  resolution?: string
   image?: File
 }

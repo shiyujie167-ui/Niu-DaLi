@@ -65,6 +65,8 @@ export function VideoForm(props: VideoFormProps) {
     model.supports_image,
     model.durations,
     model.sizes,
+    model.resolutions,
+    model.default_resolution,
     model.max_image_bytes,
     model.supported_image_types,
   ])
@@ -80,6 +82,9 @@ export function VideoForm(props: VideoFormProps) {
       defaults.seconds
     const size =
       matchingVideoParameterValue(model.sizes, values.size) ?? defaults.size
+    const resolution =
+      matchingVideoParameterValue(model.resolutions, values.resolution) ??
+      defaults.resolution
     let image = values.image
     if (
       image &&
@@ -95,9 +100,10 @@ export function VideoForm(props: VideoFormProps) {
     if (
       seconds !== values.seconds ||
       size !== values.size ||
+      resolution !== values.resolution ||
       image !== values.image
     ) {
-      form.reset({ ...values, seconds, size, image })
+      form.reset({ ...values, seconds, size, resolution, image })
     }
   }, [capabilityProfile, form, model])
   const noBalance = props.catalog.quota <= 0
@@ -114,6 +120,10 @@ export function VideoForm(props: VideoFormProps) {
               values.seconds
             ),
             size: matchingVideoParameterValue(model.sizes, values.size),
+            resolution: matchingVideoParameterValue(
+              model.resolutions,
+              values.resolution
+            ),
             image: model.supports_image ? values.image : undefined,
           })
         })}
@@ -217,12 +227,45 @@ export function VideoForm(props: VideoFormProps) {
                   name='size'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Video size')}</FormLabel>
+                      <FormLabel>
+                        {model.sizes?.every((size) => size.includes(':'))
+                          ? t('Aspect ratio')
+                          : t('Video size')}
+                      </FormLabel>
                       <FormControl>
                         <NativeSelect {...field} className='w-full'>
                           {model.sizes?.map((size) => (
                             <NativeSelectOption key={size} value={size}>
                               {size}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {Boolean(model.resolutions?.length) && (
+                <FormField
+                  control={form.control}
+                  name='resolution'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Video resolution')}</FormLabel>
+                      <FormControl>
+                        <NativeSelect {...field} className='w-full'>
+                          <NativeSelectOption value=''>
+                            {t('Default')}
+                          </NativeSelectOption>
+                          {model.resolutions?.map((resolution) => (
+                            <NativeSelectOption
+                              key={resolution}
+                              value={resolution}
+                            >
+                              {resolution
+                                .replace(/k$/i, 'K')
+                                .replace(/P$/, 'p')}
                             </NativeSelectOption>
                           ))}
                         </NativeSelect>

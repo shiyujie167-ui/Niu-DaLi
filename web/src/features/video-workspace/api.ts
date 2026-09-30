@@ -68,6 +68,7 @@ export async function createVideoTask(
   data.set('prompt', submission.prompt)
   if (submission.seconds) data.set('seconds', submission.seconds)
   if (submission.size) data.set('size', submission.size)
+  if (submission.resolution) data.set('resolution', submission.resolution)
   if (submission.image) data.set('input_reference', submission.image)
   const response = await api.post<VideoTaskReceipt>(
     '/api/video-workspace/tasks',

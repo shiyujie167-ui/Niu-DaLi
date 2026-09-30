@@ -873,6 +873,8 @@ func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
 		{"oversized duration", `{"model":"sora-2","prompt":"test","seconds":3601}`, "http://workspace.example", 400},
 		{"fractional duration", `{"model":"sora-2","prompt":"test","seconds":4.5}`, "http://workspace.example", 400},
 		{"unsupported size", `{"model":"sora-2","prompt":"test","size":"1792x1024"}`, "http://workspace.example", 400},
+		{"unsupported resolution control", `{"model":"sora-2","prompt":"test","resolution":"720p"}`, "http://workspace.example", 400},
+		{"numeric resolution", `{"model":"sora-2","prompt":"test","resolution":720}`, "http://workspace.example", 400},
 		{"metadata bypass", `{"model":"sora-2","prompt":"test","metadata":{"duration":9999}}`, "http://workspace.example", 400},
 		{"group bypass", `{"model":"sora-2","prompt":"test","group":"vip"}`, "http://workspace.example", 400},
 		{"empty prompt", `{"model":"sora-2","prompt":" "}`, "http://workspace.example", 400},
@@ -926,6 +928,9 @@ func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
 	require.Len(t, catalog.Data.Models, 1)
 	assert.True(t, catalog.Data.Models[0].SupportsImage)
+	assert.Empty(t, catalog.Data.Models[0].Resolutions, "Sora carries its resolution in the pixel size")
+	assert.Empty(t, catalog.Data.Models[0].DefaultResolution)
+	assert.Equal(t, []string{"720x1280", "1280x720"}, catalog.Data.Models[0].Sizes)
 	require.NoError(t, db.Model(&model.Channel{}).Where("models = ?", "sora-2").Update("status", common.ChannelStatusManuallyDisabled).Error)
 	response = httptest.NewRecorder()
 	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
@@ -1147,6 +1152,15 @@ func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
 	for _, item := range catalog.Data.Models {
 		actual = append(actual, item.ID)
 		assert.False(t, item.SupportsImage, "Doubao uploads are unsupported by the current adapter")
+		wantResolutions := []string{"480p", "720p", "1080p"}
+		switch item.ID {
+		case "doubao-seedance-2-0-260128":
+			wantResolutions = append(wantResolutions, "4k")
+		case "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615":
+			wantResolutions = []string{"480p", "720p"}
+		}
+		assert.Equal(t, wantResolutions, item.Resolutions, item.ID)
+		assert.Empty(t, item.DefaultResolution, "preserve provider default when its request omits a resolution")
 	}
 	assert.ElementsMatch(t, supported, actual, "the image-only model must not be offered without an image input")
 }
@@ -1154,15 +1168,17 @@ func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
 func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 	db, engine, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	cases := []struct {
-		name       string
-		maxSeconds int
-		maxPrompt  int
-		sizes      []string
+		name              string
+		maxSeconds        int
+		maxPrompt         int
+		sizes             []string
+		resolutions       []string
+		defaultResolution string
 	}{
-		{"Sd-2.0满血933", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
-		{"Sd-2.0fast", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
-		{"Sd-2.5", 30, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}},
-		{"Sd-2.0mini", 15, 2000, []string{"16:9", "9:16", "1:1"}},
+		{"Sd-2.0满血933", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}, []string{"720p", "1080p", "4k"}, "720p"},
+		{"Sd-2.0fast", 15, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}, []string{"720p", "1080p"}, "720p"},
+		{"Sd-2.5", 30, 4000, []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}, []string{"480p", "720p", "1080p"}, "720p"},
+		{"Sd-2.0mini", 15, 2000, []string{"16:9", "9:16", "1:1"}, []string{"480p", "720p"}, "480p"},
 	}
 	names := []string{"minmax-h3", "wan-3.0"}
 	for _, tc := range cases {
@@ -1207,6 +1223,8 @@ func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 		assert.Equal(t, wantDurations, item.Durations, tc.name)
 		assert.Equal(t, tc.sizes, item.Sizes, tc.name)
 		assert.Equal(t, tc.maxPrompt, item.MaxPromptLength, tc.name)
+		assert.Equal(t, tc.resolutions, item.Resolutions, tc.name)
+		assert.Equal(t, tc.defaultResolution, item.DefaultResolution, tc.name)
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"Sd-2.0mini","prompt":"`+strings.Repeat("画", 2001)+`"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -1216,6 +1234,123 @@ func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), "Prompt exceeds the selected model limit")
 	assert.Zero(t, calls.Load(), "overlong prompts must fail before upstream submission")
+}
+
+func TestVideoWorkspaceResolutionForwarding(t *testing.T) {
+	db, engine, _ := videoWorkspaceTestRouter(t, common.RoleCommonUser)
+	cases := []struct {
+		plugin, model, resolution, size string
+		wantResolution, wantSize        string
+		wantStatus                      int
+	}{
+		{"mengwuxian", "Sd-2.0满血933", "4k", "9:16", "4k", "9:16", 200},
+		{"mengwuxian", "Sd-2.0满血933", "", "16:9", "720p", "16:9", 200},
+		{"mengwuxian", "Sd-2.0mini", "720p", "1:1", "720p", "1:1", 200},
+		{"mengwuxian", "Sd-2.0mini", "4k", "", "", "", 400},
+		{"mengwuxian", "Sd-2.0fast", "4k", "", "", "", 400},
+		{"doubao", "doubao-seedance-2-0-260128", "4k", "", "4k", "", 200},
+		{"doubao", "doubao-seedance-2-0-fast-260128", "720p", "", "720p", "", 200},
+		{"doubao", "doubao-seedance-2-0-fast-260128", "1080p", "", "", "", 400},
+		{"alibaba", "wan2.7-t2v", "720P", "", "720P", "", 200},
+		{"alibaba", "wan2.5-t2v-preview", "480P", "", "480P", "832*480", 200},
+		{"alibaba", "wanx2.1-t2v-plus", "720P", "", "720P", "1280*720", 200},
+		{"alibaba", "wanx2.1-t2v-plus", "1080P", "", "", "", 400},
+	}
+	modes, expressions := map[string]string{}, map[string]string{}
+	for _, tc := range cases {
+		if _, exists := modes[tc.model]; exists {
+			continue
+		}
+		modes[tc.model], expressions[tc.model] = "tiered_expr", `tier("video", 0.01)`
+		settings, err := common.Marshal(map[string]string{"task_plugin_key": tc.plugin})
+		require.NoError(t, err)
+		setting := string(settings)
+		channel := model.Channel{Name: tc.model, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled, Group: "default", Models: tc.model, Setting: &setting}
+		require.NoError(t, db.Create(&channel).Error)
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: tc.model, ChannelId: channel.Id, Enabled: true}).Error)
+	}
+	withTieredBillingConfig(t, modes, expressions)
+	engine.POST("/resolution-test", PrepareVideoWorkspaceSubmission, func(c *gin.Context) {
+		require.NoError(t, c.Request.ParseMultipartForm(1<<20))
+		defer c.Request.MultipartForm.RemoveAll()
+		fields := c.Request.MultipartForm.Value
+		name := fields["model"][0]
+		bindings := pluginruntime.DefaultRegistry.Generation().LookupEndpointCandidates(http.MethodPost, "/v1/videos", name)
+		require.Len(t, bindings, 1)
+		plugin := bindings[0].Plugin
+		decodeContext := map[string]any{"model": name, "body": map[string]any{"kind": "multipart", "fields": fields}}
+		decoded, err := plugin.Engine.CallPath(c.Request.Context(), "protocols", []string{"openai_video", "decodeRequest"}, decodeContext)
+		require.NoError(t, err)
+		intent, ok := decoded.(map[string]any)
+		require.True(t, ok)
+		driverContext := map[string]any{"model": name, "upstreamModel": name, "baseUrl": "https://provider.example", "apiKey": "test-provider-key", "action": intent["action"], "requestBody": intent["requestBody"]}
+		descriptor, err := plugin.Engine.Call(c.Request.Context(), "buildSubmitRequest", driverContext)
+		require.NoError(t, err)
+		usage, err := plugin.Engine.Call(c.Request.Context(), "extractUsage", driverContext)
+		require.NoError(t, err)
+		c.JSON(http.StatusOK, gin.H{"request": descriptor, "usage": usage, "fields": fields})
+	})
+	for _, tc := range cases {
+		for _, encoding := range []string{"json", "multipart"} {
+			t.Run(tc.model+"/"+tc.resolution+"/"+encoding, func(t *testing.T) {
+				fields := map[string]string{"model": tc.model, "prompt": "a lighthouse"}
+				if tc.resolution != "" {
+					fields["resolution"] = tc.resolution
+				}
+				if tc.size != "" {
+					fields["size"] = tc.size
+				}
+				var body bytes.Buffer
+				contentType := gin.MIMEJSON
+				if encoding == "multipart" {
+					writer := multipart.NewWriter(&body)
+					for key, value := range fields {
+						require.NoError(t, writer.WriteField(key, value))
+					}
+					require.NoError(t, writer.Close())
+					contentType = writer.FormDataContentType()
+				} else {
+					data, err := common.Marshal(fields)
+					require.NoError(t, err)
+					_, err = body.Write(data)
+					require.NoError(t, err)
+				}
+				request := httptest.NewRequest(http.MethodPost, "http://workspace.example/resolution-test", &body)
+				request.Header.Set("Content-Type", contentType)
+				response := httptest.NewRecorder()
+				engine.ServeHTTP(response, request)
+				require.Equal(t, tc.wantStatus, response.Code, response.Body.String())
+				if tc.wantStatus != http.StatusOK {
+					assert.Contains(t, response.Body.String(), "Unsupported video resolution")
+					return
+				}
+				var result struct {
+					Request struct {
+						Body map[string]any `json:"body"`
+					} `json:"request"`
+					Usage map[string]any `json:"usage"`
+				}
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+				assert.Equal(t, tc.wantResolution, result.Usage["resolution"], "billing must use the selected output tier")
+				outbound := result.Request.Body
+				switch tc.plugin {
+				case "mengwuxian":
+					assert.Equal(t, tc.wantResolution, outbound["resolution"])
+					assert.Equal(t, tc.wantSize, outbound["aspect_ratio"], "aspect ratio stays independent of resolution")
+				case "doubao":
+					assert.Equal(t, tc.wantResolution, outbound["resolution"])
+				case "alibaba":
+					parameters, ok := outbound["parameters"].(map[string]any)
+					require.True(t, ok)
+					if tc.wantSize != "" {
+						assert.Equal(t, tc.wantSize, parameters["size"])
+					} else {
+						assert.Equal(t, tc.wantResolution, parameters["resolution"])
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestVideoWorkspaceProviderOnlyPricing(t *testing.T) {

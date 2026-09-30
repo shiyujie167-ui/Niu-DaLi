@@ -34,10 +34,16 @@ export function matchingVideoParameterValue(
 export function getVideoParameterDefaults(model: VideoWorkspaceModel): {
   seconds: string
   size: string
+  resolution: string
 } {
   return {
     seconds:
       model.durations?.[0] === undefined ? '' : String(model.durations[0]),
     size: model.sizes?.[0] ?? '',
+    resolution:
+      matchingVideoParameterValue(
+        model.resolutions,
+        model.default_resolution
+      ) ?? '',
   }
 }
