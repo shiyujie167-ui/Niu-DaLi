@@ -42,9 +42,12 @@ type videoWorkspaceModel struct {
 	SupportsImage       bool     `json:"supports_image"`
 	Durations           []int    `json:"durations,omitempty"`
 	Sizes               []string `json:"sizes,omitempty"`
+	Resolutions         []string `json:"resolutions,omitempty"`
+	DefaultResolution   string   `json:"default_resolution,omitempty"`
 	MaxImageBytes       int64    `json:"max_image_bytes,omitempty"`
 	MaxPromptLength     int      `json:"max_prompt_length"`
 	SupportedImageTypes []string `json:"supported_image_types,omitempty"`
+	resolutionMetadata  bool
 }
 
 // Session identity and origin checks are separate from API token authentication:
@@ -152,13 +155,21 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 			item.Durations = []int{5}
 		case "mengwuxian":
 			maxDuration := 15
+			item.DefaultResolution = "720p"
 			switch item.ID {
-			case "Sd-2.0满血933", "Sd-2.0fast":
+			case "Sd-2.0满血933":
+				item.Resolutions = []string{"720p", "1080p", "4k"}
+				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 5000)
+			case "Sd-2.0fast":
+				item.Resolutions = []string{"720p", "1080p"}
 				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 5000)
 			case "Sd-2.5":
+				item.Resolutions = []string{"480p", "720p", "1080p"}
 				maxDuration = 30
 				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 15000)
 			case "Sd-2.0mini":
+				item.Resolutions = []string{"480p", "720p"}
+				item.DefaultResolution = "480p"
 				item.MaxPromptLength = min(videoWorkspaceMaxPromptLength, 2000)
 			default:
 				// minmax-h3 requires a reference image; wan-3.0 is unavailable.
@@ -182,8 +193,32 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 			}, item.ID) {
 				continue
 			}
+			item.Resolutions = []string{"480p", "720p", "1080p"}
+			switch item.ID {
+			case "doubao-seedance-2-0-260128":
+				item.Resolutions = append(item.Resolutions, "4k")
+			case "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615":
+				item.Resolutions = []string{"480p", "720p"}
+			}
+			item.resolutionMetadata = true
 		case "alibaba":
-			if !strings.Contains(item.ID, "-t2v") {
+			// Match the built-in WAN_MODELS table, including supported snapshots.
+			// Its resolution tiers are distinct from pixel sizes and ratios.
+			item.DefaultResolution = "1080P"
+			switch item.ID {
+			case "wan2.7-t2v", "wan2.7-t2v-2026-04-25", "wan2.7-t2v-2026-06-12", "wan2.6-t2v", "wan2.6-t2v-us":
+				item.Resolutions = []string{"720P", "1080P"}
+			case "wan2.5-t2v-preview":
+				item.Resolutions = []string{"480P", "720P", "1080P"}
+			case "wan2.2-t2v-plus":
+				item.Resolutions = []string{"480P", "1080P"}
+			case "wanx2.1-t2v-plus":
+				item.Resolutions = []string{"720P"}
+				item.DefaultResolution = "720P"
+			case "wanx2.1-t2v-turbo":
+				item.Resolutions = []string{"480P", "720P"}
+				item.DefaultResolution = "720P"
+			default:
 				continue
 			}
 		default:
@@ -276,7 +311,7 @@ func PrepareVideoWorkspaceSubmission(c *gin.Context) {
 		return
 	}
 	for key := range fields {
-		if !slices.Contains([]string{"model", "prompt", "seconds", "size"}, key) {
+		if !slices.Contains([]string{"model", "prompt", "seconds", "size", "resolution"}, key) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "Unsupported video parameter: " + key}})
 			return
 		}
@@ -312,6 +347,10 @@ func PrepareVideoWorkspaceSubmission(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "Unsupported video size"}})
 		return
 	}
+	if resolution, exists := fields["resolution"]; exists && !slices.Contains(selected.Resolutions, resolution) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": "Unsupported video resolution"}})
+		return
+	}
 	var imageBytes []byte
 	var imageType string
 	if upload != nil {
@@ -338,8 +377,19 @@ func PrepareVideoWorkspaceSubmission(c *gin.Context) {
 	fields["prompt"] = prompt
 	var normalized bytes.Buffer
 	writer := multipart.NewWriter(&normalized)
-	for _, key := range []string{"model", "prompt", "seconds", "size"} {
+	for _, key := range []string{"model", "prompt", "seconds", "size", "resolution"} {
 		if value, exists := fields[key]; exists {
+			if key == "resolution" && selected.resolutionMetadata {
+				// Doubao's video adapter forwards native options from metadata.
+				// Construct only the validated field; callers cannot send metadata.
+				metadata, err := common.Marshal(map[string]string{"resolution": value})
+				if err != nil {
+					c.AbortWithStatus(http.StatusInternalServerError)
+					return
+				}
+				_ = writer.WriteField("metadata", string(metadata))
+				continue
+			}
 			_ = writer.WriteField(key, value)
 		}
 	}

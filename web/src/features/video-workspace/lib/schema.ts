@@ -42,6 +42,12 @@ export function videoFormSchema(model: VideoWorkspaceModel, t: TFunction) {
         (value) => !value || model.sizes?.includes(value),
         t('Choose a supported video size')
       ),
+    resolution: z
+      .string()
+      .refine(
+        (value) => !value || model.resolutions?.includes(value),
+        t('Choose a supported video resolution')
+      ),
     image: z
       .instanceof(File)
       .optional()
