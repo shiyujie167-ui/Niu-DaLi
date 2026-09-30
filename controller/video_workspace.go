@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"image"
 	_ "image/jpeg"
@@ -12,7 +13,6 @@ import (
 	"net/textproto"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +27,9 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	_ "golang.org/x/image/webp"
 )
@@ -45,6 +47,7 @@ type videoWorkspaceModel struct {
 	MaxImageBytes       int64    `json:"max_image_bytes,omitempty"`
 	MaxPromptLength     int      `json:"max_prompt_length"`
 	SupportedImageTypes []string `json:"supported_image_types,omitempty"`
+	Group               string   `json:"-"`
 }
 
 // Session identity and origin checks are separate from API token authentication:
@@ -66,9 +69,18 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 	if generation == nil {
 		return items, nil
 	}
-	group := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	groups := make([]string, 0)
+	for group := range service.GetUserUsableGroups(userGroup) {
+		if group != "" && group != "auto" && ratio_setting.ContainsGroupRatio(group) {
+			groups = append(groups, group)
+		}
+	}
+	if len(groups) == 0 {
+		return items, nil
+	}
 	var abilities []model.Ability
-	if err := model.DB.Where(map[string]any{"group": group, "enabled": true}).Find(&abilities).Error; err != nil {
+	if err := model.DB.Where(map[string]any{"group": groups, "enabled": true}).Find(&abilities).Error; err != nil {
 		return nil, err
 	}
 	channelIDs := make([]int, 0, len(abilities))
@@ -85,9 +97,11 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 	for i := range channels {
 		channelByID[channels[i].Id] = &channels[i]
 	}
-	seen := make(map[string]bool)
-	blocked := make(map[string]bool)
+	type modelGroup struct{ model, group string }
+	seen := make(map[modelGroup]bool)
+	blocked := make(map[modelGroup]bool)
 	for _, ability := range abilities {
+		route := modelGroup{ability.Model, ability.Group}
 		bindings := generation.LookupEndpointCandidates(http.MethodPost, "/v1/videos", ability.Model)
 		// Shared-model plugins can have incompatible parameter contracts. Until
 		// they expose a common UI schema, keep these out of this workspace.
@@ -115,18 +129,18 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 		if channel.ModelMapping != nil && strings.TrimSpace(*channel.ModelMapping) != "" && strings.TrimSpace(*channel.ModelMapping) != "{}" {
 			var mapping map[string]string
 			if common.UnmarshalJsonStr(*channel.ModelMapping, &mapping) != nil || mapping[ability.Model] != "" && mapping[ability.Model] != ability.Model {
-				blocked[ability.Model] = true
+				blocked[route] = true
 				continue
 			}
 		}
 		if channel.ParamOverride != nil && strings.TrimSpace(*channel.ParamOverride) != "" && strings.TrimSpace(*channel.ParamOverride) != "{}" {
-			blocked[ability.Model] = true
+			blocked[route] = true
 			continue
 		}
-		if seen[ability.Model] {
+		if seen[route] {
 			continue
 		}
-		item := videoWorkspaceModel{ID: ability.Model, Name: ability.Model, MaxPromptLength: videoWorkspaceMaxPromptLength}
+		item := videoWorkspaceModel{ID: ability.Model, Name: ability.Model, Group: ability.Group, MaxPromptLength: videoWorkspaceMaxPromptLength}
 		switch plugin.Meta.Key {
 		case "sora":
 			if !slices.Contains([]string{"sora-2", "sora-2-pro"}, item.ID) {
@@ -193,10 +207,25 @@ func videoWorkspaceModels(c *gin.Context) ([]videoWorkspaceModel, error) {
 			item.SupportedImageTypes = []string{"image/png", "image/jpeg", "image/webp"}
 		}
 		items = append(items, item)
-		seen[item.ID] = true
+		seen[route] = true
 	}
-	items = slices.DeleteFunc(items, func(item videoWorkspaceModel) bool { return blocked[item.ID] })
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	items = slices.DeleteFunc(items, func(item videoWorkspaceModel) bool { return blocked[modelGroup{item.ID, item.Group}] })
+	// Keep one route per model: prefer the account's own group, then use a
+	// stable group order. Rebuild this catalog on submission so permissions,
+	// channel availability and the billing group are checked together.
+	slices.SortFunc(items, func(a, b videoWorkspaceModel) int {
+		if order := cmp.Compare(a.ID, b.ID); order != 0 {
+			return order
+		}
+		if (a.Group == userGroup) != (b.Group == userGroup) {
+			if a.Group == userGroup {
+				return -1
+			}
+			return 1
+		}
+		return cmp.Compare(a.Group, b.Group)
+	})
+	items = slices.CompactFunc(items, func(a, b videoWorkspaceModel) bool { return a.ID == b.ID })
 	return items, nil
 }
 
@@ -365,7 +394,7 @@ func PrepareVideoWorkspaceSubmission(c *gin.Context) {
 	setting, _ := common.GetContextKeyType[kitdto.UserSetting](c, constant.ContextKeyUserSetting)
 	setting.BillingPreference = "wallet_only"
 	common.SetContextKey(c, constant.ContextKeyUserSetting, setting)
-	group := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	group := selected.Group
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 	if err := middleware.SetupContextForToken(c, &model.Token{UserId: userID, Name: "video-workspace", Group: group, UnlimitedQuota: true}); err != nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
