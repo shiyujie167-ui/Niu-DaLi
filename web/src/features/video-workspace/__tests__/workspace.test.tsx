@@ -110,12 +110,12 @@ describe('video workspace server-backed state', () => {
                   group: 'default',
                   task_id: 'task-saved',
                   platform: 'openai',
+                  platform_name: 'Video Provider',
                   action: 'GENERATE',
                   quota: 10000,
                   submit_time: 1700000000,
                   status,
                   properties: {
-                    origin_model_name: 'sora-2',
                     input: 'Saved sunrise prompt',
                   },
                 },
@@ -126,6 +126,7 @@ describe('video workspace server-backed state', () => {
     }))
     const first = await openWorkspace()
     expect(await screen.findByText('Saved sunrise prompt')).toBeVisible()
+    expect(screen.getByText('Video Provider')).toBeVisible()
     expect(screen.getByText('In Progress')).toBeVisible()
     first.unmount()
     await openWorkspace()

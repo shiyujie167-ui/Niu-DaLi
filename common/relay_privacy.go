@@ -9,6 +9,11 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// PublicRelayFailureMessage keeps upstream diagnostics out of client responses.
+func PublicRelayFailureMessage(requestID string) string {
+	return MessageWithRequestId("The model request failed. Contact support with the request ID.", requestID)
+}
+
 // PublicRelayJSON removes routing/accounting provenance from a client copy.
 // Only protocol envelopes are inspected: generated text, tool arguments, image
 // data and user metadata must never be traversed or rewritten. Callers retain
@@ -49,7 +54,7 @@ func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
 			if !value.Exists() || value.Type == gjson.Null || value.Raw == `""` {
 				continue
 			}
-			if clean, err := sjson.SetBytes(data, prefix+field, MessageWithRequestId("The model request failed. Contact support with the request ID.", requestID)); err == nil {
+			if clean, err := sjson.SetBytes(data, prefix+field, PublicRelayFailureMessage(requestID)); err == nil {
 				data = clean
 			}
 		}
@@ -70,7 +75,7 @@ func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
 		if !upstreamError.Exists() && eventType != "error" && eventType != "upstream_error" {
 			continue
 		}
-		message := MessageWithRequestId("The model request failed. Contact support with the request ID.", requestID)
+		message := PublicRelayFailureMessage(requestID)
 		code := "upstream_error"
 		// These protocol codes drive client retry/cancellation behavior.
 		switch candidate := upstreamError.Get("code").String(); candidate {
