@@ -70,6 +70,51 @@ afterEach(() => {
 })
 
 describe('video workspace server-backed state', () => {
+  test('switching to the canvas keeps the ordinary form draft and does not submit a task', async () => {
+    vi.spyOn(api, 'get').mockImplementation(async (url) => {
+      let data: unknown = { items: [], total: 0 }
+      if (url.endsWith('/models')) data = catalog
+      if (url.endsWith('/canvas')) {
+        data = {
+          revision: 0,
+          submissions: [],
+          graph: {
+            schema_version: 1,
+            nodes: [],
+            edges: [],
+            viewport: { x: 0, y: 0, zoom: 1 },
+          },
+        }
+      }
+      return { data: { success: true, data } }
+    })
+    const post = vi.spyOn(api, 'post')
+    await openWorkspace()
+    const user = userEvent.setup()
+    await user.type(
+      await screen.findByRole('textbox', { name: 'Video prompt' }),
+      'Keep my normal video draft'
+    )
+    await user.click(screen.getByRole('tab', { name: 'Infinite canvas' }))
+    expect(
+      await screen.findByRole('region', { name: 'Infinite canvas' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('tab', { name: 'Infinite canvas' })
+    ).toHaveAttribute('aria-selected', 'true')
+    expect(
+      screen.queryByRole('textbox', { name: 'Video prompt' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Standard' }))
+    expect(screen.getByRole('textbox', { name: 'Video prompt' })).toHaveValue(
+      'Keep my normal video draft'
+    )
+    expect(
+      screen.queryByRole('region', { name: 'Infinite canvas' })
+    ).not.toBeInTheDocument()
+    expect(post).not.toHaveBeenCalled()
+  })
+
   test('without a configured channel, explains the configuration gap and offers no generation controls', async () => {
     vi.spyOn(api, 'get').mockImplementation(async (url) => ({
       data: {

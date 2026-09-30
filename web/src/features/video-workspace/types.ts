@@ -22,6 +22,11 @@ export interface VideoWorkspaceModel {
   id: string
   name: string
   supports_image: boolean
+  max_reference_images?: number
+  supports_video?: boolean
+  max_reference_videos?: number
+  max_outputs?: number
+  supports_mixed_media?: boolean
   durations?: number[]
   sizes?: string[]
   resolutions?: string[]

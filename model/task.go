@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -81,9 +82,11 @@ func (t *Task) GetData(v any) error {
 }
 
 type Properties struct {
-	Input             string `json:"input"`
-	UpstreamModelName string `json:"upstream_model_name,omitempty"`
-	OriginModelName   string `json:"origin_model_name,omitempty"`
+	Input              string `json:"input"`
+	UpstreamModelName  string `json:"upstream_model_name,omitempty"`
+	OriginModelName    string `json:"origin_model_name,omitempty"`
+	CanvasNodeID       string `json:"canvas_node_id,omitempty"`
+	CanvasSubmissionID string `json:"canvas_submission_id,omitempty"`
 }
 
 func (m *Properties) Scan(val any) error {
@@ -491,6 +494,16 @@ func (Task *Task) Insert() error {
 // while the in-memory task keeps its values for presentation.
 func (Task *Task) InsertWithContext(ctx context.Context, omitColumns ...string) error {
 	tx := DB.WithContext(ctx)
+	if Task.Properties.CanvasSubmissionID != "" {
+		// Task ownership and the canvas receipt cross the durable barrier together,
+		// so a lost browser response cannot detach an accepted, billable task.
+		return tx.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Omit(omitColumns...).Create(Task).Error; err != nil {
+				return err
+			}
+			return CompleteVideoWorkspaceSubmissionWithTx(tx, Task.UserId, Task.Properties.CanvasSubmissionID, Task.TaskID)
+		})
+	}
 	if len(omitColumns) > 0 {
 		tx = tx.Omit(omitColumns...)
 	}

@@ -224,7 +224,7 @@ function MediaFailure(props: { onRetry: () => void }) {
   )
 }
 
-function TaskArtifactCard(props: {
+export function TaskArtifactCard(props: {
   artifact: TaskArtifact
   loadMedia?: TaskMediaLoader
 }) {

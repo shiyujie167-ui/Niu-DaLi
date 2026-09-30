@@ -677,7 +677,7 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 func videoWorkspaceTestRouter(t *testing.T, role int) (*gorm.DB, *gin.Engine, *atomic.Int32) {
 	t.Helper()
 	require.NoError(t, i18n.Init())
-	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Log{}, &model.Token{})
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Log{}, &model.Token{}, &model.VideoWorkspaceCanvas{}, &model.VideoWorkspaceAsset{}, &model.VideoWorkspaceSubmission{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
 	oldMaster := common.IsMasterNode
@@ -878,6 +878,12 @@ func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
 		{"metadata bypass", `{"model":"sora-2","prompt":"test","metadata":{"duration":9999}}`, "http://workspace.example", 400},
 		{"group bypass", `{"model":"sora-2","prompt":"test","group":"vip"}`, "http://workspace.example", 400},
 		{"empty prompt", `{"model":"sora-2","prompt":" "}`, "http://workspace.example", 400},
+		{"zero outputs", `{"model":"sora-2","prompt":"test","n":0}`, "http://workspace.example", 400},
+		{"multiple outputs", `{"model":"sora-2","prompt":"test","n":2}`, "http://workspace.example", 400},
+		{"fractional outputs", `{"model":"sora-2","prompt":"test","n":1.5}`, "http://workspace.example", 400},
+		{"multi-image unsupported", `{"model":"sora-2","prompt":"test","image_asset_ids":["a","b"]}`, "http://workspace.example", 400},
+		{"video unsupported", `{"model":"sora-2","prompt":"test","video_references":[{"task_id":"a","artifact_key":"video"}]}`, "http://workspace.example", 400},
+		{"incomplete canvas identity", `{"model":"sora-2","prompt":"test","submission_id":"a"}`, "http://workspace.example", 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(tc.body))
@@ -928,6 +934,9 @@ func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
 	require.Len(t, catalog.Data.Models, 1)
 	assert.True(t, catalog.Data.Models[0].SupportsImage)
+	assert.Equal(t, 1, catalog.Data.Models[0].MaxReferenceImages)
+	assert.Equal(t, 1, catalog.Data.Models[0].MaxOutputs)
+	assert.False(t, catalog.Data.Models[0].SupportsVideo)
 	assert.Empty(t, catalog.Data.Models[0].Resolutions, "Sora carries its resolution in the pixel size")
 	assert.Empty(t, catalog.Data.Models[0].DefaultResolution)
 	assert.Equal(t, []string{"720x1280", "1280x720"}, catalog.Data.Models[0].Sizes)
@@ -1210,6 +1219,19 @@ func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 	for _, item := range catalog.Data.Models {
 		byModel[item.ID] = item
 		assert.True(t, item.SupportsImage)
+		assert.Equal(t, 1, item.MaxOutputs)
+		assert.False(t, item.SupportsMixedMedia)
+		wantImages := 9
+		if item.ID == "Sd-2.5" {
+			wantImages = 30
+		}
+		assert.Equal(t, wantImages, item.MaxReferenceImages)
+		assert.Equal(t, item.ID == "Sd-2.0mini", item.SupportsVideo)
+		if item.SupportsVideo {
+			assert.Equal(t, 3, item.MaxReferenceVideos)
+		} else {
+			assert.Zero(t, item.MaxReferenceVideos)
+		}
 		assert.Equal(t, int64(10<<20), item.MaxImageBytes)
 		assert.Equal(t, []string{"image/png", "image/jpeg", "image/webp"}, item.SupportedImageTypes)
 	}
@@ -1386,4 +1408,161 @@ func TestVideoWorkspaceProviderOnlyPricing(t *testing.T) {
 	require.NoError(t, db.First(&owner, 7).Error)
 	assert.Equal(t, 1_000_000-common.QuotaRound(4*0.02*common.QuotaPerUnit), owner.Quota)
 	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestVideoWorkspaceCanvasMediaAndSubmissionRecovery(t *testing.T) {
+	db, engine, _ := videoWorkspaceTestRouter(t, common.RoleCommonUser)
+	withTieredBillingConfig(t, map[string]string{"Sd-2.5": "tiered_expr", "Sd-2.0mini": "tiered_expr"}, map[string]string{
+		"Sd-2.5": `tier("video", u("seconds") * 0.01)`, "Sd-2.0mini": `tier("video", u("video_count") * 0.01)`,
+	})
+	var firstImage, secondImage bytes.Buffer
+	require.NoError(t, png.Encode(&firstImage, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	require.NoError(t, png.Encode(&secondImage, image.NewRGBA(image.Rect(0, 0, 3, 2))))
+	for _, asset := range []model.VideoWorkspaceAsset{
+		{ID: "saved-image-one", UserID: 7, ContentHash: strings.Repeat("a", 64), Filename: "one.png", MimeType: "image/png", Size: int64(firstImage.Len()), Width: 2, Height: 2, Data: firstImage.Bytes()},
+		{ID: "saved-image-two", UserID: 7, ContentHash: strings.Repeat("b", 64), Filename: "two.png", MimeType: "image/png", Size: int64(secondImage.Len()), Width: 3, Height: 2, Data: secondImage.Bytes()},
+		{ID: "another-users-image", UserID: 8, ContentHash: strings.Repeat("a", 64), Filename: "private.png", MimeType: "image/png", Size: int64(firstImage.Len()), Width: 2, Height: 2, Data: firstImage.Bytes()},
+	} {
+		require.NoError(t, db.Create(&asset).Error)
+	}
+	_, err := model.SaveVideoWorkspaceCanvas(7, 0, []byte(`{"schema_version":1,"nodes":[{"id":"generator-images","type":"generation"},{"id":"generator-video","type":"generation"},{"id":"ambiguous-generator","type":"generation"}],"edges":[],"viewport":{"x":0,"y":0,"zoom":1}}`))
+	require.NoError(t, err)
+	for _, fixture := range []struct {
+		id     string
+		owner  int
+		status model.TaskStatus
+	}{{"another-users-video", 8, model.TaskStatusSuccess}, {"unfinished-video", 7, model.TaskStatusInProgress}} {
+		require.NoError(t, db.Create(&model.Task{UserId: fixture.owner, TaskID: fixture.id, Status: fixture.status, Action: constant.TaskActionTextToVideo, PrivateData: model.TaskPrivateData{ResultURL: "https://cdn.example/private.mp4"}}).Error)
+	}
+	var calls atomic.Int32
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		assert.Equal(t, "local-canvas-provider-key", r.Header.Get("X-API-Key"))
+		assert.Empty(t, r.Header.Get("Authorization"), "browser credentials must never reach the provider")
+		if call == 1 {
+			assert.Equal(t, "/api/v1/video-tasks/multipart", r.URL.Path)
+			require.NoError(t, r.ParseMultipartForm(1<<20))
+			defer r.MultipartForm.RemoveAll()
+			assert.Equal(t, "Sd-2.5", r.FormValue("model_code"))
+			assert.Equal(t, "720p", r.FormValue("resolution"))
+			assert.Equal(t, "6", r.FormValue("duration_seconds"))
+			assert.Equal(t, "9:16", r.FormValue("aspect_ratio"))
+			require.Len(t, r.MultipartForm.File["reference_images"], 2)
+			for index, file := range r.MultipartForm.File["reference_images"] {
+				reader, err := file.Open()
+				require.NoError(t, err)
+				data, err := io.ReadAll(reader)
+				require.NoError(t, err)
+				require.NoError(t, reader.Close())
+				assert.Equal(t, [][]byte{firstImage.Bytes(), secondImage.Bytes()}[index], data, "every linked image must reach the provider as its real bytes")
+			}
+		} else {
+			assert.Equal(t, "/api/v1/video-tasks", r.URL.Path)
+			var body map[string]any
+			require.NoError(t, common.DecodeJson(r.Body, &body))
+			if call == 2 {
+				assert.Equal(t, "Sd-2.0mini", body["model_code"])
+				assert.Equal(t, []any{"https://cdn.example/generated-1.mp4"}, body["video_urls"], "connected task output must become a real provider input")
+			} else {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"error":"provider outcome unknown"}`)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"task_id":"tsk_%032x","status":"succeeded","result_url":"https://cdn.example/generated-%d.mp4"}`, call, call)
+	}))
+	t.Cleanup(upstream.Close)
+	client := service.GetHttpClient()
+	oldTransport := client.Transport
+	client.Transport = upstream.Client().Transport
+	t.Cleanup(func() { client.Transport = oldTransport })
+	settings := `{"task_plugin_key":"mengwuxian"}`
+	channel := model.Channel{Name: "canvas-local-provider", Type: constant.ChannelTypeTaskPlugin, Key: "local-canvas-provider-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Group: "default", Models: "Sd-2.5,Sd-2.0mini", Setting: &settings}
+	require.NoError(t, db.Create(&channel).Error)
+	for _, name := range []string{"Sd-2.5", "Sd-2.0mini"} {
+		require.NoError(t, db.Create(&model.Ability{Group: "default", Model: name, ChannelId: channel.Id, Enabled: true}).Error)
+	}
+	imageRequest := `{"model":"Sd-2.5","prompt":"Animate both images","seconds":6,"size":"9:16","resolution":"720p","n":1,"image_asset_ids":["saved-image-one","saved-image-two"],"canvas_node_id":"generator-images","submission_id":"canvas-image-submit"}`
+	var firstTaskID string
+	for range 2 {
+		request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(imageRequest))
+		request.Header.Set("Content-Type", gin.MIMEJSON)
+		request.Header.Set("Origin", "http://workspace.example")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var receipt struct {
+			ID string `json:"id"`
+		}
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &receipt))
+		require.NotEmpty(t, receipt.ID)
+		if firstTaskID == "" {
+			firstTaskID = receipt.ID
+		} else {
+			assert.Equal(t, firstTaskID, receipt.ID)
+		}
+	}
+	assert.Equal(t, int32(1), calls.Load(), "replaying an accepted submission cannot charge twice")
+	var firstTask model.Task
+	require.NoError(t, db.Where("task_id = ?", firstTaskID).First(&firstTask).Error)
+	assert.Equal(t, "generator-images", firstTask.Properties.CanvasNodeID)
+	assert.Equal(t, "canvas-image-submit", firstTask.Properties.CanvasSubmissionID)
+	var run model.VideoWorkspaceSubmission
+	require.NoError(t, db.Where("user_id = ? AND submission_id = ?", 7, "canvas-image-submit").First(&run).Error)
+	assert.Equal(t, "accepted", run.Status)
+	assert.Equal(t, firstTaskID, run.TaskID)
+	videoBody := fmt.Sprintf(`{"model":"Sd-2.0mini","prompt":"Continue the scene","video_references":[{"task_id":%q,"artifact_key":"video"}],"canvas_node_id":"generator-video","submission_id":"canvas-video-submit"}`, firstTaskID)
+	request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(videoBody))
+	request.Header.Set("Content-Type", gin.MIMEJSON)
+	request.Header.Set("Origin", "http://workspace.example")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, int32(2), calls.Load())
+	var owner model.User
+	require.NoError(t, db.First(&owner, 7).Error)
+	assert.Equal(t, 1_000_000-common.QuotaRound(7*0.01*common.QuotaPerUnit), owner.Quota, "image and continuation each use the existing wallet settlement exactly once")
+	for _, body := range []string{
+		`{"model":"Sd-2.5","prompt":"test","image_asset_ids":["another-users-image"]}`,
+		`{"model":"Sd-2.5","prompt":"test","image_asset_ids":["saved-image-one","saved-image-one"]}`,
+		`{"model":"Sd-2.0mini","prompt":"test","video_references":[{"task_id":"missing-or-other-user","artifact_key":"video"}]}`,
+		`{"model":"Sd-2.0mini","prompt":"test","video_references":[{"task_id":"another-users-video","artifact_key":"video"}]}`,
+		`{"model":"Sd-2.0mini","prompt":"test","video_references":[{"task_id":"unfinished-video","artifact_key":"video"}]}`,
+		`{"model":"Sd-2.0mini","prompt":"test","image_asset_ids":["saved-image-one"],"video_references":[{"task_id":"video","artifact_key":"video"}]}`,
+		`{"model":"Sd-2.0mini","prompt":"test","video_references":[{"task_id":"a","artifact_key":"video"},{"task_id":"b","artifact_key":"video"},{"task_id":"c","artifact_key":"video"},{"task_id":"d","artifact_key":"video"}]}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(body))
+		request.Header.Set("Content-Type", gin.MIMEJSON)
+		request.Header.Set("Origin", "http://workspace.example")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	}
+	assert.Equal(t, int32(2), calls.Load(), "invalid or unauthorized references never reach an upstream")
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 7).Update("quota", 0).Error)
+	request = httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"Sd-2.0mini","prompt":"insufficient balance","canvas_node_id":"ambiguous-generator","submission_id":"canvas-no-balance-submit"}`))
+	request.Header.Set("Content-Type", gin.MIMEJSON)
+	request.Header.Set("Origin", "http://workspace.example")
+	response = httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	assert.GreaterOrEqual(t, response.Code, 400, response.Body.String())
+	var failedRun model.VideoWorkspaceSubmission
+	require.NoError(t, db.Where("user_id = ? AND submission_id = ?", 7, "canvas-no-balance-submit").First(&failedRun).Error)
+	assert.Equal(t, model.VideoWorkspaceSubmissionFailed, failedRun.Status, "a balance rejection did not contact the upstream and does not permanently block the node")
+	assert.Equal(t, int32(2), calls.Load())
+	require.NoError(t, db.Model(&model.User{}).Where("id = ?", 7).Update("quota", owner.Quota).Error)
+	for attempt := range 2 {
+		request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"Sd-2.0mini","prompt":"provider-timeout","canvas_node_id":"ambiguous-generator","submission_id":"canvas-ambiguous-submit"}`))
+		request.Header.Set("Content-Type", gin.MIMEJSON)
+		request.Header.Set("Origin", "http://workspace.example")
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, request)
+		if attempt == 0 {
+			assert.GreaterOrEqual(t, response.Code, 400, response.Body.String())
+		} else {
+			assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+		}
+	}
+	assert.Equal(t, int32(3), calls.Load(), "an ambiguous submission is never automatically replayed")
 }
