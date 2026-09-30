@@ -16,17 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/**
- * Application-wide constants
- */
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 
-// System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = 'Niu Dali'
-export const DEFAULT_LOGO = '/niu-dali-icon.png'
+/** Resolve deployment branding without changing New API project attribution. */
+export function resolveSystemName(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_SYSTEM_NAME
 
-// LocalStorage Keys
-export const STORAGE_KEYS = {
-  SYSTEM_NAME: 'system_name',
-  LOGO: 'logo',
-  FOOTER_HTML: 'footer_html',
-} as const
+  const name = value.trim()
+  if (!name || name === '大力牛' || /^new[ -]?apiy?$/i.test(name)) {
+    return DEFAULT_SYSTEM_NAME
+  }
+
+  return name
+}

@@ -27,6 +27,7 @@ import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
 import { createAppQueryClient } from '@/lib/query-client'
 import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
+import { resolveSystemName } from '@/lib/system-name'
 
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
@@ -71,7 +72,8 @@ if (!rootElement) {
 ;(function initSystemBranding() {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
-    const apply = (name: string) => {
+    const apply = (value: unknown) => {
+      const name = resolveSystemName(value)
       document.title = name
       const metaTitle = document.querySelector(
         'meta[name="title"]'
@@ -80,7 +82,7 @@ if (!rootElement) {
     }
     // Cache-first
     const cached = readCachedStatus()
-    if (cached?.system_name) apply(cached.system_name as string)
+    apply(cached?.system_name)
     if (cached?.logo) applyFaviconToDom(cached.logo as string)
 
     // Background refresh through the shared cache. This primes ['status']
@@ -90,7 +92,7 @@ if (!rootElement) {
     queryClient
       .ensureQueryData(statusQueryOptions)
       .then((s) => {
-        if (s?.system_name) apply(s.system_name as string)
+        if (s) apply(s.system_name)
         if (s?.logo) applyFaviconToDom(s.logo as string)
       })
       .catch(() => {

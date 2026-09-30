@@ -22,6 +22,7 @@ import { useEffect, useCallback } from 'react'
 import { DEFAULT_LOGO } from '@/lib/constants'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 import { ensureStatus } from '@/lib/status-query'
+import { resolveSystemName } from '@/lib/system-name'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 interface UseSystemConfigOptions {
@@ -110,6 +111,7 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
 
   return {
     ...config,
+    systemName: resolveSystemName(config.systemName),
     loading,
     logoLoaded: config.logo === loadedLogoUrl && !!loadedLogoUrl,
   }
