@@ -6,6 +6,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/plugins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -105,17 +107,30 @@ func TestTaskLogDTOReplacesLegacyVideoURLWithAvailabilityFlag(t *testing.T) {
 	assert.Contains(t, string(encoded), "legacy_video_available")
 }
 
-func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T) {
+func TestTaskLogDTOKeepsFailureDiagnosticsPrivateAndDoesNotMarkPluginTaskLegacy(t *testing.T) {
 	failed := &model.Task{
 		TaskID:     "task_failed",
 		Platform:   "jimeng",
 		Action:     constant.TaskActionTextToVideo,
 		Status:     model.TaskStatusFailure,
-		FailReason: "provider rejected the request",
+		FailReason: "梦无限 rejected the request",
+		Data:       []byte(`{"error_message":"梦无限 rejected the request","provider_name":"梦无限","prompt":"a lighthouse"}`),
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{RequestID: "request-public"},
+		},
 	}
 	failedView := tasksToDto([]*model.Task{failed}, false, common.RoleCommonUser)[0]
-	assert.Equal(t, "provider rejected the request", failedView.FailReason)
+	assert.Equal(t, common.MessageWithRequestId("The model request failed. Contact support with the request ID.", "request-public"), failedView.FailReason)
+	var publicData map[string]any
+	require.NoError(t, common.Unmarshal(failedView.Data, &publicData))
+	assert.Equal(t, failedView.FailReason, publicData["error_message"])
+	assert.NotContains(t, publicData, "provider_name")
+	assert.Equal(t, "a lighthouse", publicData["prompt"])
 	assert.False(t, failedView.LegacyVideoAvailable)
+	adminView := tasksToDto([]*model.Task{failed}, false, common.RoleAdminUser)[0]
+	assert.Equal(t, "梦无限 rejected the request", adminView.FailReason)
+	assert.JSONEq(t, `{"error_message":"梦无限 rejected the request","provider_name":"梦无限","prompt":"a lighthouse"}`, string(adminView.Data))
+	assert.Equal(t, "梦无限 rejected the request", failed.FailReason)
 
 	pluginTask := &model.Task{
 		TaskID:     "task_plugin_video",
@@ -134,4 +149,31 @@ func TestTaskLogDTOKeepsFailureReasonAndDoesNotMarkPluginTaskLegacy(t *testing.T
 	assert.False(t, pluginView.LegacyVideoAvailable)
 	assert.Empty(t, pluginView.ResultURL)
 	assert.Empty(t, pluginView.FailReason)
+}
+
+func TestTaskLogDTOUsesCurrentPluginDisplayNameForHistoricalTasks(t *testing.T) {
+	previousRegistry := jsplugin.DefaultRegistry
+	jsplugin.DefaultRegistry = jsplugin.NewRegistry()
+	t.Cleanup(func() { jsplugin.DefaultRegistry = previousRegistry })
+	source, err := plugins.Source("mengwuxian")
+	require.NoError(t, err)
+	_, err = jsplugin.DefaultRegistry.RegisterFactory(source, jsplugin.Options{})
+	require.NoError(t, err)
+	task := &model.Task{
+		TaskID:   "task_historical",
+		Platform: "mengwuxian",
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{
+				TaskPlugin: &model.TaskPluginSnapshot{Key: "mengwuxian", Name: "梦无限", Version: "1.0.2"},
+			},
+		},
+	}
+	view := tasksToDto([]*model.Task{task}, false, common.RoleCommonUser)[0]
+	assert.Equal(t, "大力牛VIdeo", view.PlatformName)
+	assert.Equal(t, "mengwuxian", view.Platform)
+	assert.Nil(t, view.AdminInfo)
+	assert.Equal(t, "梦无限", task.PrivateData.Execution.TaskPlugin.Name)
+	unknown := tasksToDto([]*model.Task{{Platform: "unavailable-plugin"}}, false, common.RoleCommonUser)[0]
+	assert.Empty(t, unknown.PlatformName)
+	assert.Equal(t, "unavailable-plugin", unknown.Platform)
 }

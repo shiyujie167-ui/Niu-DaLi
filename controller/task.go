@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -446,6 +447,7 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		}
 	}
 	result := make([]*dto.TaskDto, len(tasks))
+	generation := jsplugin.DefaultRegistry.Generation()
 	for i, task := range tasks {
 		if fillUser {
 			if user, ok := userIDMap[task.UserId]; ok {
@@ -453,6 +455,9 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		item := relay.TaskModel2Dto(task)
+		if plugin, ok := relay.ResolveTaskPluginForPlatform(generation, task.Platform); ok {
+			item.PlatformName = plugin.Meta.Name
+		}
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
 		item.ResultDiscarded = task.PrivateData.ResultDiscarded
 		if task.Status == model.TaskStatusSuccess {
@@ -460,6 +465,16 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			if taskFailReasonIsLegacyResultURL(task.FailReason) {
 				item.FailReason = ""
 			}
+		}
+		if viewerRole < common.RoleAdminUser {
+			requestID := ""
+			if execution := task.PrivateData.Execution; execution != nil {
+				requestID = execution.RequestID
+			}
+			if item.FailReason != "" {
+				item.FailReason = common.PublicRelayFailureMessage(requestID)
+			}
+			item.Data = common.PublicRelayJSON(item.Data, requestID, true)
 		}
 		if viewerRole >= common.RoleAdminUser {
 			adminInfo := &dto.TaskAdminInfo{}

@@ -119,6 +119,7 @@ export function VideoHistory(props: VideoHistoryProps) {
                     <CardTitle className='min-w-0 break-all'>
                       {task.properties?.origin_model_name ||
                         task.properties?.upstream_model_name ||
+                        task.platform_name ||
                         task.platform}
                     </CardTitle>
                     <StatusBadge
