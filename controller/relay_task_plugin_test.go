@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -28,6 +29,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -672,11 +674,13 @@ func TestExecuteTaskSubmissionRefundsWhenFinalReserveFails(t *testing.T) {
 
 // This fixture uses disposable dialect databases and a local fake provider;
 // it never reads channel keys, users, or balances from a running deployment.
-func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int32) {
+func videoWorkspaceTestRouter(t *testing.T, role int) (*gorm.DB, *gin.Engine, *atomic.Int32) {
 	t.Helper()
+	require.NoError(t, i18n.Init())
 	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Ability{}, &model.Task{}, &model.Log{}, &model.Token{})
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldMaster := common.IsMasterNode
 	oldRedis, oldMemory, oldBatch, oldConsume, oldExport := common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled
 	model.DB, model.LOG_DB = db, db
 	common.SetDatabaseTypes(dialect, dialect)
@@ -684,8 +688,29 @@ func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int3
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = oldDB, oldLogDB
 		common.SetDatabaseTypes(oldMain, oldLog)
+		common.IsMasterNode = oldMaster
 		common.RedisEnabled, common.MemoryCacheEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled, common.DataExportEnabled = oldRedis, oldMemory, oldBatch, oldConsume, oldExport
 	})
+	// Initialize dialect quoting without opening another database or migrating.
+	t.Setenv("LOG_SQL_DSN", "")
+	common.IsMasterNode = false
+	require.NoError(t, model.InitLogDB())
+	oldGroups := setting.UserUsableGroups2JSONString()
+	oldRatios := ratio_setting.GroupRatio2JSONString()
+	oldGroupRatios := ratio_setting.GroupGroupRatio2JSONString()
+	specialGroups := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup
+	oldSpecialGroups := specialGroups.ReadAll()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(oldGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(oldRatios))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(oldGroupRatios))
+		specialGroups.Clear()
+		specialGroups.AddAll(oldSpecialGroups)
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{}`))
+	specialGroups.Clear()
 	withTieredBillingConfig(t, map[string]string{"sora-2": "tiered_expr"}, map[string]string{"sora-2": `tier("video", u("seconds") * 0.01)`})
 	_, err := pluginruntime.DefaultRegistry.Register(`
  export const meta={apiVersion:1,key:"sora",name:"Workspace test provider",version:"1.0.0",author:{name:"Test"},models:["sora-2"],channelTypes:[55,1],protocols:["openai_video"],fetchMode:"per_task",usageSchema:{seconds:{type:"number",unit:"second",description:{en:"Video generation unit price"}}}};
@@ -720,7 +745,7 @@ func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int3
 	}))
 	t.Cleanup(upstream.Close)
 	service.InitHttpClient()
-	user := model.User{Id: 7, Username: "workspace-owner", AffCode: "workspace-owner", Status: common.UserStatusEnabled, Role: common.RoleRootUser, Group: "default", Quota: 1_000_000}
+	user := model.User{Id: 7, Username: "workspace-owner", AffCode: "workspace-owner", Status: common.UserStatusEnabled, Role: role, Group: "default", Quota: 1_000_000}
 	require.NoError(t, db.Create(&user).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 11, UserId: 7, Key: "unused-workspace-api-token", Name: "unchanged", RemainQuota: 123456}).Error)
 	channel := model.Channel{Name: "workspace-local-provider", Type: constant.ChannelTypeSora, Key: "local-test-channel-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Models: "sora-2", Group: "default"}
@@ -729,7 +754,7 @@ func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int3
 	engine := gin.New()
 	engine.Use(middleware.BodyStorageCleanup(), func(c *gin.Context) {
 		c.Set("id", 7)
-		c.Set("role", common.RoleRootUser)
+		c.Set("role", role)
 		c.Set("username", user.Username)
 		c.Set("session_id", "test-session")
 		c.Set("auth_version", int64(1))
@@ -742,15 +767,12 @@ func videoWorkspaceTestRouter(t *testing.T) (*gorm.DB, *gin.Engine, *atomic.Int3
 	engine.GET("/api/video-workspace/tasks", GetVideoWorkspaceTasks)
 	engine.GET("/api/video-workspace/tasks/:task_id/artifacts", GetVideoWorkspaceArtifacts)
 	engine.GET("/api/video-workspace/tasks/:task_id/artifacts/:artifact_key/content", VideoWorkspaceArtifactContent)
-	engine.POST("/api/video-workspace/tasks", middleware.BrowserOriginGuard(), PrepareVideoWorkspaceSubmission, middleware.PinTaskPluginEndpoint(), middleware.PrepareTaskPluginEndpoint(), func(c *gin.Context) {
-		require.Nil(t, middleware.SetupContextForSelectedChannel(c, &channel, "sora-2"))
-		c.Next()
-	}, func(c *gin.Context) { RelayTaskPluginEndpoint(c, RelayTask) })
+	engine.POST("/api/video-workspace/tasks", middleware.BrowserOriginGuard(), PrepareVideoWorkspaceSubmission, middleware.PinTaskPluginEndpoint(), middleware.PrepareTaskPluginEndpoint(), middleware.Distribute(), func(c *gin.Context) { RelayTaskPluginEndpoint(c, RelayTask) })
 	return db, engine, calls
 }
 
 func TestVideoWorkspaceWalletPersistenceAndOwnership(t *testing.T) {
-	db, engine, calls := videoWorkspaceTestRouter(t)
+	db, engine, calls := videoWorkspaceTestRouter(t, common.RoleRootUser)
 	var taskIDs []string
 	for _, prompt := range []string{"a lighthouse", "fail"} {
 		request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"sora-2","prompt":"`+prompt+`","seconds":4}`))
@@ -839,7 +861,7 @@ func TestVideoWorkspaceWalletPersistenceAndOwnership(t *testing.T) {
 }
 
 func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
-	db, engine, calls := videoWorkspaceTestRouter(t)
+	db, engine, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	for _, tc := range []struct {
 		name, body, origin string
 		status             int
@@ -911,6 +933,124 @@ func TestVideoWorkspaceValidationAndCatalog(t *testing.T) {
 	assert.Empty(t, catalog.Data.Models)
 }
 
+func TestVideoWorkspaceAuthorizedGroupRouting(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		groups      []string
+		blocked     string
+		change      string
+		wantGroup   string
+		wantRatio   float64
+		specialOnly bool
+	}{
+		{name: "ordinary user reaches an authorized video group", groups: []string{"video"}, wantGroup: "video", wantRatio: 2},
+		{name: "special permission and user group price apply", groups: []string{"video"}, wantGroup: "video", wantRatio: 0.5, specialOnly: true},
+		{name: "home group wins over other authorized groups", groups: []string{"video-z", "video-a", "default"}, wantGroup: "default", wantRatio: 1},
+		{name: "other groups use stable alphabetical order", groups: []string{"video-z", "video-a"}, wantGroup: "video-a", wantRatio: 3},
+		{name: "mapped home group does not hide another group", groups: []string{"default", "video"}, blocked: "mapping", wantGroup: "video", wantRatio: 2},
+		{name: "overridden home group does not hide another group", groups: []string{"video", "default"}, blocked: "parameters", wantGroup: "video", wantRatio: 2},
+		{name: "ungranted group is unavailable", groups: []string{"private"}},
+		{name: "group without configured price ratio is unavailable", groups: []string{"deprecated"}},
+		{name: "auto is not a concrete channel group", groups: []string{"auto"}},
+		{name: "empty group is unavailable", groups: []string{""}},
+		{name: "permission revocation rejects a previously listed model", groups: []string{"video"}, change: "revoke", wantGroup: "video"},
+		{name: "deleted group ratio rejects a previously listed model", groups: []string{"video"}, change: "deprecate", wantGroup: "video"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, engine, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
+			require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"video":"Video","video-a":"Video A","video-z":"Video Z","deprecated":"Deprecated","auto":"Auto","":"Empty"}`))
+			require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"video":2,"video-a":3,"video-z":4,"private":5,"auto":6,"":7}`))
+			if tc.specialOnly {
+				require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{}`))
+				ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Set("default", map[string]string{"+:video": "Video"})
+				require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"default":{"video":0.5}}`))
+			}
+			var template model.Channel
+			require.NoError(t, db.First(&template).Error)
+			require.NoError(t, db.Where("channel_id = ?", template.Id).Delete(&model.Ability{}).Error)
+			require.NoError(t, db.Delete(&template).Error)
+			channelIDs := make(map[string]int)
+			for _, group := range tc.groups {
+				channel := template
+				channel.Id, channel.Group = 0, group
+				if group == "default" {
+					switch tc.blocked {
+					case "mapping":
+						channel.ModelMapping = common.GetPointer(`{"sora-2":"sora-2-pro"}`)
+					case "parameters":
+						channel.ParamOverride = common.GetPointer(`{"seconds":8}`)
+					}
+				}
+				require.NoError(t, db.Create(&channel).Error)
+				require.NoError(t, db.Create(&model.Ability{Group: group, Model: "sora-2", ChannelId: channel.Id, Enabled: true}).Error)
+				channelIDs[group] = channel.Id
+			}
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var catalog struct {
+				Data struct {
+					Models []videoWorkspaceModel `json:"models"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+			if tc.wantGroup == "" {
+				require.Empty(t, catalog.Data.Models)
+			} else {
+				require.Len(t, catalog.Data.Models, 1, "the same model across groups is shown once")
+				assert.Equal(t, "sora-2", catalog.Data.Models[0].ID)
+				assert.NotContains(t, response.Body.String(), `"group"`, "routing groups remain server-owned")
+			}
+			switch tc.change {
+			case "revoke":
+				ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Set("default", map[string]string{"-:video": ""})
+			case "deprecate":
+				require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+			}
+			if tc.change != "" {
+				response = httptest.NewRecorder()
+				engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/video-workspace/models", nil))
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				require.NoError(t, common.Unmarshal(response.Body.Bytes(), &catalog))
+				assert.Empty(t, catalog.Data.Models)
+			}
+			request := httptest.NewRequest(http.MethodPost, "http://workspace.example/api/video-workspace/tasks", strings.NewReader(`{"model":"sora-2","prompt":"a lighthouse","seconds":4}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "http://workspace.example")
+			response = httptest.NewRecorder()
+			engine.ServeHTTP(response, request)
+			var owner model.User
+			require.NoError(t, db.First(&owner, 7).Error)
+			assert.Equal(t, "default", owner.Group, "routing never changes the account's group")
+			assert.Equal(t, common.RoleCommonUser, owner.Role)
+			var tasks []model.Task
+			require.NoError(t, db.Find(&tasks).Error)
+			var logs []model.Log
+			require.NoError(t, db.Where("type = ?", model.LogTypeConsume).Find(&logs).Error)
+			if tc.wantGroup == "" || tc.change != "" {
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				assert.Zero(t, calls.Load(), "an unavailable group must not reach the upstream")
+				assert.Equal(t, 1_000_000, owner.Quota)
+				assert.Empty(t, tasks)
+				assert.Empty(t, logs)
+				return
+			}
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.Equal(t, int32(1), calls.Load())
+			wantCharge := common.QuotaRound(4 * 0.01 * common.QuotaPerUnit * tc.wantRatio)
+			assert.Equal(t, 1_000_000-wantCharge, owner.Quota)
+			require.Len(t, tasks, 1)
+			assert.Equal(t, tc.wantGroup, tasks[0].Group)
+			assert.Equal(t, channelIDs[tc.wantGroup], tasks[0].ChannelId)
+			assert.Equal(t, wantCharge, tasks[0].Quota)
+			require.Len(t, logs, 1)
+			assert.Equal(t, tc.wantGroup, logs[0].Group)
+			assert.Equal(t, channelIDs[tc.wantGroup], logs[0].ChannelId)
+			assert.Equal(t, wantCharge, logs[0].Quota)
+		})
+	}
+}
+
 func TestVideoWorkspaceRequiresLiveSessionIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -942,7 +1082,7 @@ func TestVideoWorkspaceRequiresLiveSessionIdentity(t *testing.T) {
 }
 
 func TestVideoWorkspaceRejectsExpiredAndRevokedSessions(t *testing.T) {
-	db, _, calls := videoWorkspaceTestRouter(t)
+	db, _, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	require.NoError(t, db.AutoMigrate(&model.UserSession{}))
 	t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(&model.UserSession{})) })
 	oldSecret := common.SessionSecret
@@ -978,7 +1118,7 @@ func TestVideoWorkspaceRejectsExpiredAndRevokedSessions(t *testing.T) {
 }
 
 func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
-	db, engine, _ := videoWorkspaceTestRouter(t)
+	db, engine, _ := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	supported := []string{"doubao-seedance-1-0-pro-250528", "doubao-seedance-1-0-lite-t2v", "doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615", "doubao-seedance-2-5-260628"}
 	names := append(append([]string{}, supported...), "doubao-seedance-1-0-lite-i2v")
 	modes, expressions := map[string]string{}, map[string]string{}
@@ -1012,7 +1152,7 @@ func TestVideoWorkspaceDoubaoCatalogRequiresTextInputSupport(t *testing.T) {
 }
 
 func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
-	db, engine, calls := videoWorkspaceTestRouter(t)
+	db, engine, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	cases := []struct {
 		name       string
 		maxSeconds int
@@ -1079,7 +1219,7 @@ func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 }
 
 func TestVideoWorkspaceProviderOnlyPricing(t *testing.T) {
-	db, engine, calls := videoWorkspaceTestRouter(t)
+	db, engine, calls := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	withSelfUseModeDisabled(t)
 	oldPrices, oldRatios := ratio_setting.ModelPrice2JSONString(), ratio_setting.ModelRatio2JSONString()
 	t.Cleanup(func() {
