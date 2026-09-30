@@ -1237,7 +1237,7 @@ func TestVideoWorkspaceMengwuxianCatalog(t *testing.T) {
 }
 
 func TestVideoWorkspaceResolutionForwarding(t *testing.T) {
-	db, engine, _ := videoWorkspaceTestRouter(t)
+	db, engine, _ := videoWorkspaceTestRouter(t, common.RoleCommonUser)
 	cases := []struct {
 		plugin, model, resolution, size string
 		wantResolution, wantSize        string
