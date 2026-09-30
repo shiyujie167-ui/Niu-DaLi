@@ -29,12 +29,11 @@ const VIDEO_TASK_USAGE = {
 export const meta = {
   apiVersion: 1,
   key: "mengwuxian",
-  name: "梦无限",
-  icon: "text:梦",
-  version: "1.0.2",
+  name: "大力牛VIdeo",
+  icon: "text:牛",
+  version: "1.0.3",
   author: { name: "Niu Dali" },
-  description: { en: "Video and image generation via Mengwuxian", zh: "通过梦无限生成视频和图片" },
-  website: "https://www.zhi168.it.com",
+  description: { en: "Video and image generation with 大力牛VIdeo", zh: "通过大力牛VIdeo生成视频和图片" },
   baseUrl: "https://www.zhi168.it.com",
   auth: "api_key",
   models: Object.keys(VIDEO_MODELS).concat(IMAGE_MODELS),
@@ -55,13 +54,13 @@ export const meta = {
 function modelConfig(model, kind) {
   if (kind === "image" && IMAGE_MODELS.includes(model)) return { prompt: 2000, images: 8, audio: 0, videos: 0, ratios: IMAGE_RATIOS };
   if (kind === "video" && Object.prototype.hasOwnProperty.call(VIDEO_MODELS, model)) return VIDEO_MODELS[model];
-  throw new Error("Unsupported Mengwuxian " + kind + " model");
+  throw new Error("Unsupported 大力牛VIdeo " + kind + " model");
 }
 
 function mediaKind(action) {
   if (action === "image") return "image";
   if (["text_to_video", "image_to_video", "reference_to_video"].includes(action)) return "video";
-  throw new Error("Unsupported Mengwuxian task action");
+  throw new Error("Unsupported 大力牛VIdeo task action");
 }
 
 function requestBody(ctx) {
@@ -200,8 +199,8 @@ function submitIntent(ctx, kind) {
 
 function apiRequest(ctx, path) {
   const base = String(ctx.baseUrl || "").replace(/\/+$/, "");
-  if (!/^https:\/\/[^\s/@?#\\]+(?:\/[^\s?#\\]*)?$/.test(base)) throw new Error("Mengwuxian Base URL must use HTTPS without credentials, query or fragment");
-  if (typeof ctx.apiKey !== "string" || !ctx.apiKey.trim() || /[\r\n]/.test(ctx.apiKey)) throw new Error("Mengwuxian API key is required");
+  if (!/^https:\/\/[^\s/@?#\\]+(?:\/[^\s?#\\]*)?$/.test(base)) throw new Error("大力牛VIdeo Base URL must use HTTPS without credentials, query or fragment");
+  if (typeof ctx.apiKey !== "string" || !ctx.apiKey.trim() || /[\r\n]/.test(ctx.apiKey)) throw new Error("大力牛VIdeo API key is required");
   return { url: base + "/api/v1/" + path, method: "GET", headers: { "X-API-Key": ctx.apiKey } };
 }
 
@@ -258,7 +257,7 @@ export function parseTaskResult(ctx, body) {
   if (!body || !Object.prototype.hasOwnProperty.call(states, body.status)) return { status: "UNKNOWN" };
   if (body.task_id !== undefined && ctx.taskId !== undefined && vendorTaskID(body.task_id) !== String(ctx.taskId)) return { status: "UNKNOWN" };
   const status = states[body.status];
-  if (status === "FAILURE") return { status, reason: typeof body.error_message === "string" && body.error_message ? body.error_message : "Mengwuxian task failed or was canceled" };
+  if (status === "FAILURE") return { status, reason: typeof body.error_message === "string" && body.error_message ? body.error_message : "大力牛VIdeo task failed or was canceled" };
   if (status !== "SUCCESS") return { status };
   if (!mediaURL(body.result_url)) return { status: "UNKNOWN", reason: "Completed task has no valid result URL" };
   return { status, url: body.result_url, progress: "100%" };
