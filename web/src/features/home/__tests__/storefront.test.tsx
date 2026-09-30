@@ -71,6 +71,18 @@ beforeEach(() => {
 })
 
 describe('Niu Dali storefront primary action', () => {
+  it.each(['NEW API', 'NEW APIY', '大力牛'])(
+    'shows Niu Dali when the cached site name is %s',
+    async (systemName) => {
+      useSystemConfigStore.getState().setConfig({ systemName })
+      renderStorefront(false)
+
+      expect(
+        await screen.findByRole('heading', { name: 'Niu Dali', level: 1 })
+      ).toBeInTheDocument()
+    }
+  )
+
   it('allows long system names to wrap inside the hero', async () => {
     useSystemConfigStore.getState().setConfig({
       systemName: 'NiuDaliTokenAccessForEverySupportedModel',

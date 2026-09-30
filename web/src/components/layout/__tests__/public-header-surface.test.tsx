@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -27,6 +28,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth-store'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { PublicHeader } from '../components/public-header'
 
@@ -43,20 +45,14 @@ vi.mock('@/hooks/use-notifications', () => ({
   }),
 }))
 
-vi.mock('@/hooks/use-system-config', () => ({
-  useSystemConfig: () => ({
-    loading: false,
-    logo: '/niu-dali-icon.png',
-    logoLoaded: true,
-    systemName: '大力牛',
-  }),
-}))
-
 vi.mock('@/hooks/use-top-nav-links', () => ({
   useTopNavLinks: () => [],
 }))
 
 function renderHeader() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   const rootRoute = createRootRoute({
     component: () => (
       <PublicHeader
@@ -75,11 +71,17 @@ function renderHeader() {
     history: createMemoryHistory({ initialEntries: ['/'] }),
   })
 
-  return render(<RouterProvider router={router} />)
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  )
 }
 
 beforeEach(() => {
   useAuthStore.setState(useAuthStore.getInitialState(), true)
+  useSystemConfigStore.setState(useSystemConfigStore.getInitialState(), true)
+  useSystemConfigStore.getState().setLoading(false)
   Object.defineProperty(window, 'scrollY', {
     configurable: true,
     value: 0,
@@ -88,6 +90,17 @@ beforeEach(() => {
 })
 
 describe('PublicHeader hero surface', () => {
+  it.each(['NEW API', 'NEW APIY'])(
+    'shows Niu Dali in the navigation when the cached site name is %s',
+    async (systemName) => {
+      useSystemConfigStore.getState().setConfig({ systemName })
+      renderHeader()
+
+      const header = await screen.findByRole('banner')
+      expect(within(header).getByTitle('Niu Dali')).toBeVisible()
+    }
+  )
+
   it('uses the hero surface at the top of the page', async () => {
     renderHeader()
 

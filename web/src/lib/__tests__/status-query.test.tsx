@@ -90,6 +90,27 @@ afterEach(() => {
 })
 
 describe('shared status query deduplication', () => {
+  test.each(['New API', 'NEW API', 'NEW APIY', '大力牛', ''])(
+    'uses Niu Dali for the legacy site name %j returned by the server',
+    async (name) => {
+      stubStatusEndpoint(name)
+
+      await ensureStatus(createQueryClient())
+
+      expect(useSystemConfigStore.getState().config.systemName).toBe('Niu Dali')
+    }
+  )
+
+  test('preserves an explicitly configured custom site name', async () => {
+    stubStatusEndpoint('Team Gateway')
+
+    await ensureStatus(createQueryClient())
+
+    expect(useSystemConfigStore.getState().config.systemName).toBe(
+      'Team Gateway'
+    )
+  })
+
   test.each(['cold', 'stale'] as const)(
     'deduplicates %s cache requests across guards and hook consumers',
     async (cacheState) => {

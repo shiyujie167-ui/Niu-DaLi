@@ -746,70 +746,27 @@ For commercial licensing, please contact support@quantumnous.com
   }
 }
 
-/* Niu Dali storefront: violet tokens scoped away from the console.
- * Light is the default; `.dark` on <html> switches to the dark set, so the
- * storefront follows the same light / dark / system choice as other pages. */
+/* Niu Dali storefront inherits the selected palette and light/dark mode. */
 .niu-dali-home,
 .public-header-hero-surface {
-  --background: oklch(0.985 0.006 295);
-  --foreground: oklch(0.2 0.035 291);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.035 291);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.035 291);
-  --primary: oklch(0.5 0.2 293);
-  --primary-foreground: oklch(0.99 0.004 295);
-  --secondary: oklch(0.955 0.016 295);
-  --secondary-foreground: oklch(0.26 0.045 291);
-  --muted: oklch(0.955 0.016 295);
-  --muted-foreground: oklch(0.47 0.04 295);
-  --accent: oklch(0.94 0.03 294);
-  --accent-foreground: oklch(0.2 0.035 291);
-  --border: oklch(0.9 0.02 294);
-  --input: oklch(0.86 0.025 294);
-  --ring: oklch(0.5 0.2 293);
   color: var(--foreground);
-}
-
-.dark .niu-dali-home,
-.dark .public-header-hero-surface {
-  --background: oklch(0.114 0.02 291.5);
-  --foreground: oklch(0.975 0.013 295.4);
-  --card: oklch(0.196 0.036 290.4);
-  --card-foreground: oklch(0.975 0.013 295.4);
-  --popover: oklch(0.169 0.027 290.3);
-  --popover-foreground: oklch(0.975 0.013 295.4);
-  --primary: oklch(0.709 0.159 293.6);
-  --primary-foreground: oklch(0.114 0.02 291.5);
-  --secondary: oklch(0.247 0.041 291.4);
-  --secondary-foreground: oklch(0.94 0.018 295);
-  --muted: oklch(0.247 0.041 291.4);
-  --muted-foreground: oklch(0.729 0.036 298.3);
-  --accent: oklch(0.247 0.06 291.4);
-  --accent-foreground: oklch(0.975 0.013 295.4);
-  --border: oklch(0.291 0.047 292 / 72%);
-  --input: oklch(0.518 0.063 295.6);
-  --ring: oklch(0.709 0.159 293.6);
 }
 
 .niu-dali-home {
   --niu-hero: var(--background);
   --niu-hero-foreground: var(--foreground);
   --niu-hero-muted: var(--muted-foreground);
-  --niu-action: oklch(0.541 0.247 293);
-  --niu-action-hover: oklch(0.49 0.23 293);
-  --niu-action-foreground: oklch(0.99 0.004 295);
-  --niu-cyan: oklch(0.6 0.13 225);
-  --niu-control-border: oklch(0.62 0.06 294);
+  --niu-action: var(--primary);
+  --niu-action-hover: color-mix(
+    in oklch,
+    var(--primary) 90%,
+    var(--background)
+  );
+  --niu-action-foreground: var(--primary-foreground);
+  --niu-cyan: var(--chart-3);
+  --niu-control-border: var(--input);
   --niu-line: var(--border);
-  --niu-panel: oklch(1 0 0 / 82%);
-}
-
-.dark .niu-dali-home {
-  --niu-action-foreground: var(--foreground);
-  --niu-cyan: oklch(0.76 0.14 220);
-  --niu-control-border: oklch(0.518 0.063 295.6);
-  --niu-panel: oklch(0.196 0.036 290.4 / 88%);
+  --niu-panel: color-mix(in oklch, var(--card) 85%, transparent);
 }
 
 .niu-dali-hero,
@@ -862,7 +819,7 @@ For commercial licensing, please contact support@quantumnous.com
 .niu-dali-secondary-action:hover {
   border-color: var(--primary);
   background-color: var(--secondary);
-  color: var(--niu-hero-foreground);
+  color: var(--secondary-foreground);
 }
 
 @keyframes niu-dali-signal-breathe {
