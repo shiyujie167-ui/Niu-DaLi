@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -55,7 +56,29 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 	default:
 		return nil, fmt.Errorf("unsupported relay format: %s", format)
 	}
+	applyTokenDefaultStream(c, request)
 	return request, err
+}
+
+func applyTokenDefaultStream(c *gin.Context, request dto.Request) {
+	if request == nil || !common.GetContextKeyBool(c, constant.ContextKeyTokenDefaultStream) {
+		return
+	}
+
+	switch typedRequest := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if typedRequest.Stream == nil {
+			typedRequest.Stream = common.GetPointer(true)
+		}
+	case *dto.OpenAIResponsesRequest:
+		if typedRequest.Stream == nil {
+			typedRequest.Stream = common.GetPointer(true)
+		}
+	case *dto.ClaudeRequest:
+		if typedRequest.Stream == nil {
+			typedRequest.Stream = common.GetPointer(true)
+		}
+	}
 }
 
 func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, error) {

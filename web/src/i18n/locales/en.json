@@ -3943,6 +3943,8 @@
     "Not Set": "Not Set",
     "Not set yet": "Not set yet",
     "Not shown": "Not shown",
+    "Default streaming output": "Default streaming output",
+    "Use streaming output by default when requests omit stream": "Use streaming output by default when requests omit stream",
     "Not Started": "Not Started",
     "Not Submitted": "Not Submitted",
     "Not tested": "Not tested",

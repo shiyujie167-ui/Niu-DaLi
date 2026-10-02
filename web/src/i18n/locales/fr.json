@@ -3943,6 +3943,8 @@
     "Not Set": "Non défini",
     "Not set yet": "Non défini",
     "Not shown": "Masqué",
+    "Default streaming output": "Sortie en continu par défaut",
+    "Use streaming output by default when requests omit stream": "Utiliser la sortie en continu par défaut lorsque la requête omet stream",
     "Not Started": "Non démarré",
     "Not Submitted": "Non soumis",
     "Not tested": "Non testé",

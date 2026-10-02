@@ -3943,6 +3943,8 @@
     "Not Set": "Не установлено",
     "Not set yet": "Ещё не задано",
     "Not shown": "Скрыто",
+    "Default streaming output": "Потоковый вывод по умолчанию",
+    "Use streaming output by default when requests omit stream": "Использовать потоковый вывод по умолчанию, если в запросе не указан stream",
     "Not Started": "Не начато",
     "Not Submitted": "Не отправлено",
     "Not tested": "Не протестировано",

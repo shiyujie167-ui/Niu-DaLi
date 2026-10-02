@@ -819,4 +819,6 @@ export const STATIC_I18N_KEYS = [
   'Vendor name and icon must not exceed 128 characters.',
   'Shown',
   'Not shown',
+  'Default streaming output',
+  'Use streaming output by default when requests omit stream',
 ] as const
