@@ -34,15 +34,7 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 
 type tokenRequest struct {
 	model.Token
-	AutoGroups    tokenAutoGroupsInput `json:"auto_groups"`
-	DefaultStream *bool                `json:"default_stream"`
-}
-
-func (request tokenRequest) defaultStream() bool {
-	if request.DefaultStream == nil {
-		return true
-	}
-	return *request.DefaultStream
+	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
 }
 
 type tokenResponse struct {
@@ -291,7 +283,6 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
-	defaultStream := request.defaultStream()
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -352,7 +343,6 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
-		DefaultStream:      defaultStream,
 		AutoGroups:         token.AutoGroups,
 	}
 	err = cleanToken.Insert()
@@ -449,9 +439,6 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if request.DefaultStream != nil {
-			cleanToken.DefaultStream = *request.DefaultStream
-		}
 		if token.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
@@ -485,7 +472,6 @@ func UpdateToken(c *gin.Context) {
 				(previous.AllowIps != nil && cleanToken.AllowIps != nil && *previous.AllowIps != *cleanToken.AllowIps)},
 			{"group", previous.Group != cleanToken.Group},
 			{"cross_group_retry", previous.CrossGroupRetry != cleanToken.CrossGroupRetry},
-			{"default_stream", previous.DefaultStream != cleanToken.DefaultStream},
 			{"auto_groups", previous.AutoGroups != cleanToken.AutoGroups},
 		} {
 			if field.changed {

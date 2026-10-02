@@ -517,31 +517,6 @@ export function ApiKeysMutateDrawer({
 
               <FormField
                 control={form.control}
-                name='default_stream'
-                render={({ field }) => (
-                  <FormItem className={sideDrawerSwitchItemClassName()}>
-                    <div className='flex flex-col gap-0.5'>
-                      <FormLabel className='text-sm'>
-                        {t('Default streaming output')}
-                      </FormLabel>
-                      <FormDescription className='text-xs'>
-                        {t(
-                          'Use streaming output by default when requests omit stream'
-                        )}
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={!!field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
                 name='expired_time'
                 render={({ field }) => (
                   <FormItem>

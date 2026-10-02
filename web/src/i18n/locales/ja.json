@@ -3943,8 +3943,6 @@
     "Not Set": "未設定",
     "Not set yet": "未設定",
     "Not shown": "非表示",
-    "Default streaming output": "デフォルトでストリーミング出力",
-    "Use streaming output by default when requests omit stream": "リクエストで stream が未指定の場合、デフォルトでストリーミング出力を使用",
     "Not Started": "未開始",
     "Not Submitted": "未送信",
     "Not tested": "未テスト",

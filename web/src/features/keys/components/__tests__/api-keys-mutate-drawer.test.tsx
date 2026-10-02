@@ -234,35 +234,7 @@ describe('API keys mutate drawer Auto group integration', () => {
       expect(payload.group).toBe('auto')
       expect(payload.auto_groups).toEqual([])
       expect(payload.cross_group_retry).toBe(true)
-      expect(payload.default_stream).toBe(true)
     }
-  })
-
-  test('enables default streaming output for new keys', async () => {
-    const createdPayloads: Array<Record<string, unknown>> = []
-    installApiFixtures(createdPayloads)
-    await renderCreateDrawer()
-
-    changeInput(getControlByLabel('Name'), 'streaming')
-    fireEvent.click(findButton('Save changes', true))
-    await waitFor(() => expect(createdPayloads).toHaveLength(1))
-
-    expect(createdPayloads[0]?.default_stream).toBe(true)
-  })
-
-  test('allows disabling default streaming output for a new key', async () => {
-    const createdPayloads: Array<Record<string, unknown>> = []
-    installApiFixtures(createdPayloads)
-    await renderCreateDrawer()
-
-    changeInput(getControlByLabel('Name'), 'non-streaming')
-    fireEvent.click(
-      screen.getByRole('switch', { name: 'Default streaming output' })
-    )
-    fireEvent.click(findButton('Save changes', true))
-    await waitFor(() => expect(createdPayloads).toHaveLength(1))
-
-    expect(createdPayloads[0]?.default_stream).toBe(false)
   })
 
   test('preserves an unsaved custom order and mode after Auto to ordinary to Auto changes', async () => {
