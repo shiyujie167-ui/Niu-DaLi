@@ -43,7 +43,7 @@ export const apiKeySchema = z.object({
     }, z.boolean())
     .optional()
     .default(false),
-  default_stream: z.boolean().default(false),
+  default_stream: z.boolean().default(true),
   model_limits_enabled: z.boolean(),
   model_limits: z.string().nullish().default(''),
   allow_ips: z.string().nullish().default(''),

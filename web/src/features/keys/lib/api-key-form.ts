@@ -115,7 +115,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   auto_groups_mode: 'inherit',
   auto_groups: [],
   cross_group_retry: true,
-  default_stream: false,
+  default_stream: true,
   tokenCount: 1,
 }
 
