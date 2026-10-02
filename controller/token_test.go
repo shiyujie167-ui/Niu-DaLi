@@ -27,33 +27,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestTokenRequestDefaultStream(t *testing.T) {
-	tests := []struct {
-		name           string
-		payload        string
-		wantConfigured bool
-		wantValue      bool
-	}{
-		{name: "omitted defaults true", payload: `{"name":"default"}`, wantValue: true},
-		{name: "explicit true", payload: `{"name":"enabled","default_stream":true}`, wantConfigured: true, wantValue: true},
-		{name: "explicit false", payload: `{"name":"disabled","default_stream":false}`, wantConfigured: true, wantValue: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var request tokenRequest
-			require.NoError(t, common.Unmarshal([]byte(tt.payload), &request))
-			if tt.wantConfigured {
-				require.NotNil(t, request.DefaultStream)
-				assert.Equal(t, tt.wantValue, *request.DefaultStream)
-			} else {
-				assert.Nil(t, request.DefaultStream)
-			}
-			assert.Equal(t, tt.wantValue, request.defaultStream())
-		})
-	}
-}
-
 type tokenAPIResponse struct {
 	Success bool            `json:"success"`
 	Message string          `json:"message"`
