@@ -3943,6 +3943,8 @@
     "Not Set": "Chưa đặt",
     "Not set yet": "Chưa thiết lập",
     "Not shown": "Ẩn",
+    "Default streaming output": "Đầu ra streaming mặc định",
+    "Use streaming output by default when requests omit stream": "Mặc định dùng đầu ra streaming khi yêu cầu không chỉ định stream",
     "Not Started": "Chưa bắt đầu",
     "Not Submitted": "Chưa gửi",
     "Not tested": "Chưa kiểm tra",

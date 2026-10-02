@@ -3943,6 +3943,8 @@
     "Not Set": "未設定",
     "Not set yet": "尚未設定",
     "Not shown": "隱藏",
+    "Default streaming output": "預設串流輸出",
+    "Use streaming output by default when requests omit stream": "當請求未指定 stream 時預設使用串流輸出",
     "Not Started": "未開始",
     "Not Submitted": "未提交",
     "Not tested": "未測試",

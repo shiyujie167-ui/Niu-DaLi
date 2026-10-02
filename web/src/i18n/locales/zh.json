@@ -3943,6 +3943,8 @@
     "Not Set": "未设置",
     "Not set yet": "尚未设置",
     "Not shown": "隐藏",
+    "Default streaming output": "默认流式输出",
+    "Use streaming output by default when requests omit stream": "请求未指定 stream 时默认使用流式输出",
     "Not Started": "未开始",
     "Not Submitted": "未提交",
     "Not tested": "未测试",
