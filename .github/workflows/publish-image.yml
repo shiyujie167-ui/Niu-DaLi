@@ -1,0 +1,143 @@
+name: Publish image to GHCR
+
+# 本流水线只做两件事：在 GitHub Actions 上构建 linux/amd64 镜像，并推送到 GHCR（public）。
+# 它**不**通过 SSH 连接生产服务器，**不**执行任何远程部署。
+# 生产发布由唯一发布操作人在服务器上人工执行 /srv/new-api/ops/deploy.sh <full-sha>。
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '要构建的 git ref（分支或 sha），默认 main'
+        required: false
+        default: main
+        type: string
+      platforms:
+        description: '目标平台（默认 linux/amd64，阿里云 ECS x86_64）'
+        required: false
+        default: linux/amd64
+        type: string
+
+# GHCR 推送需要 packages: write；读取仓库需要 contents: read。
+permissions:
+  contents: read
+  packages: write
+
+# 同一 ref 的构建串行化，避免并发推送竞争；不取消进行中的构建。
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build & push (linux/amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 1
+
+      - name: Compute image ref & tags
+        id: meta
+        # 值经 env 传入，避免把 ${{ }} 表达式（含 ref / dispatch 输入等外部可控值）直接内插进 shell 正文。
+        env:
+          CHECKOUT_REF: ${{ inputs.ref || github.ref }}
+        run: |
+          set -euo pipefail
+          # CHECKOUT_REF 由上方 env 绑定传入，与 checkout 步骤的 ref 表达式逐字一致。
+          # 判定是否 main 必须基于「实际 checkout 的 ref」，而不是触发上下文的 GITHUB_REF：
+          # workflow_dispatch 时 GITHUB_REF 反映 UI 上选择的分支，与真正 checkout 的 ref 无关。
+          # 说明：若该 env 未绑定（配置缺失），set -u 会使其明确失败，绝不会静默产出错误 tag。
+          # GHCR 镜像路径必须全小写；owner 统一转小写。
+          OWNER="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER}/niu-dali"
+
+          FULL_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="${FULL_SHA:0:12}"
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Dockerfile 会读取 VERSION 注入 common.Version；此处必须**在构建之前**写入，
+          # 否则构建出来的版本号为空。VERSION 已被 git 跟踪但内容为空。
+          printf '%s\n' "${SHORT_SHA}" > VERSION
+
+          # 归一化判断：main 与 refs/heads/main 都算 main；
+          # feature/x、裸 sha（分离头指针）、refs/tags/* 等都不算。
+          IS_MAIN=0
+          case "${CHECKOUT_REF}" in
+            main | refs/heads/main) IS_MAIN=1 ;;
+            *) IS_MAIN=0 ;;
+          esac
+
+          {
+            echo "image=${IMAGE}"
+            echo "owner=${OWNER}"
+            echo "full_sha=${FULL_SHA}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "created=${CREATED}"
+            echo "image_ref=${IMAGE}:sha-${FULL_SHA}"
+            # tags 为多行输出。
+            echo "tags<<EOF"
+            echo "${IMAGE}:sha-${FULL_SHA}"
+            echo "${IMAGE}:sha-${SHORT_SHA}"
+            # main 仅为移动指针，禁止用于发布记录；仅当**实际 checkout 的 ref** 归一化后为 main 时追加。
+            if [ "${IS_MAIN}" -eq 1 ]; then
+              echo "${IMAGE}:main"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # 显式 OCI labels：不使用 docker/metadata-action，避免其 revision 取自 github.sha
+          # （触发分支的 sha）而在「触发 ref ≠ checkout ref」时标错提交。
+          # revision 恒等于 meta 步骤 git rev-parse HEAD 得到的 FULL_SHA。
+          labels: |
+            org.opencontainers.image.title=niu-dali
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.meta.outputs.full_sha }}
+            org.opencontainers.image.created=${{ steps.meta.outputs.created }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Job summary
+        run: |
+          {
+            echo "### Publish image to GHCR"
+            echo ""
+            echo "| 字段 | 值 |"
+            echo "| --- | --- |"
+            echo "| image_ref | \`${{ steps.meta.outputs.image_ref }}\` |"
+            echo "| digest | \`${{ steps.build.outputs.digest }}\` |"
+            echo ""
+            echo "在**生产服务器**上执行发布（由唯一发布操作人操作）:"
+            echo '```'
+            echo "/srv/new-api/ops/deploy.sh ${{ steps.meta.outputs.full_sha }}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
