@@ -54,3 +54,7 @@ go.work.sum
 !.env.example
 !.env.*.example
 /服务器/
+
+# Local agent/ops knowledge base; never commit.
+.codex/
+.workbuddy/

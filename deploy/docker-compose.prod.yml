@@ -1,0 +1,117 @@
+# ⚠️  参考模板（REFERENCE TEMPLATE ONLY）—— 不是生产现网文件的权威版本。
+#
+# 生产现网的唯一权威编排文件是：/srv/new-api/production/compose.yaml
+#   使用本模板前必须先与它做逐行 diff 核对，**禁止直接覆盖生产文件**。示例：
+#     diff -u /srv/new-api/production/compose.yaml deploy/docker-compose.prod.yml
+#
+# 真实结构（依据项目自带运维技能 niu-dali-prod-log-analysis）：
+#   - compose project：newapi-prod（本文件头 name: 显式声明；ops/*.sh 另以 -p newapi-prod 绑定）
+#   - 服务：app / postgres / redis / caddy（对应的容器名由 compose 生成为 newapi-prod-<svc>-1）
+#   - 容器：newapi-prod-app-1 / newapi-prod-postgres-1 / newapi-prod-redis-1 / newapi-prod-caddy-1
+#   - PostgreSQL 用户/库：newapi / newapi
+#   - Caddyfile：/srv/new-api/production/Caddyfile（即 relative ./Caddyfile）
+#
+# ⚠️ 故意**不写 container_name**：让 compose 按「<project>-<service>-<index>」生成
+#    newapi-prod-app-1 等名字，避免与现有生产容器冲突、也避免误起并行容器。
+#    需要引用容器名的地方（脚本/巡检）统一走 ops.env 的 APP_CONTAINER 等变量。
+#
+# 安全：本文件不得出现任何真实密钥。所有敏感值通过 .env（参考 deploy/.env.prod.example）注入。
+#
+# 发布约束（与 ops/*.sh 一致）：
+#   - 发布只允许重建 app 一个服务：docker compose -p newapi-prod up -d --no-deps app
+#   - 永不 `docker compose down`，永不删除数据卷，永不触碰 postgres / redis / caddy 容器。
+
+name: newapi-prod
+
+services:
+  app:
+    # 使用预构建镜像；镜像由 GitHub Actions 构建并推送到 GHCR（public）。
+    # 无 build: 段——生产服务器不再本机构建。
+    image: ${APP_IMAGE}
+    restart: always
+    command: --log-dir /app/logs
+    env_file: .env
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - new-api-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -Eq '\"success\"[[:space:]]*:[[:space:]]*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # 停止超时保持 60s（历史未决项 OPS-02，不在本方案中变更）。
+    stop_grace_period: 60s
+
+  postgres:
+    image: postgres:15.10-alpine
+    restart: always
+    environment:
+      # 生产真实值：用户/库均为 newapi（务必与现网 .env 一致，勿用 root/new-api）。
+      POSTGRES_USER: ${POSTGRES_USER:-newapi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
+      POSTGRES_DB: ${POSTGRES_DB:-newapi}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - new-api-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7.4.2-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-CHANGE_ME}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-CHANGE_ME}
+    volumes:
+      - redis_data:/data
+    networks:
+      - new-api-network
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  caddy:
+    # ⚠️ 以下字段需与现网 Caddyfile / 端口 / 卷逐项核对：
+    #    镜像 tag、发布的 80/443、Caddyfile 与 data/config 卷路径，均可能与本模板不同。
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Caddyfile 位于 /srv/new-api/production/Caddyfile，即 compose 目录下的 ./Caddyfile。
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - new-api-network
+
+volumes:
+  pg_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+# ⚠️ 网络名需与现网核对：本模板显式声明 new-api-network（bridge）；
+#    若现网使用 compose 生成的默认网络（newapi-prod_default），请以现网为准。
+networks:
+  new-api-network:
+    driver: bridge

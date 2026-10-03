@@ -20,3 +20,10 @@ local.env.*
 
 # Local server access files must never enter image build contexts.
 /服务器/
+
+# Local operational knowledge and evidence must not enter image build contexts.
+/.codex/server/
+
+# Operational scripts and deploy templates must not enter the image build context.
+/ops/
+/deploy/
