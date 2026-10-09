@@ -36,6 +36,15 @@ type TopNavProps = React.HTMLAttributes<HTMLElement> & {
 }
 
 /**
+ * Absolute http(s) hrefs cannot go through the router `Link` (they are not
+ * app routes). Such links render as a plain anchor in the current tab, which
+ * is how cross-origin entries such as the Infinite Canvas behave.
+ */
+function isAbsoluteUrl(href: string): boolean {
+  return /^https?:\/\//i.test(href)
+}
+
+/**
  * 顶部导航栏组件
  * 在大屏幕显示水平导航，在小屏幕显示下拉菜单
  */
@@ -77,6 +86,13 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
                       >
                         {title}
                       </a>
+                    ) : isAbsoluteUrl(href) ? (
+                      <a
+                        href={href}
+                        className={!isActive ? 'text-muted-foreground' : ''}
+                      >
+                        {title}
+                      </a>
                     ) : (
                       <Link
                         to={href}
@@ -109,6 +125,14 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
               href={href}
               target='_blank'
               rel='noopener noreferrer'
+              className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
+            >
+              {title}
+            </a>
+          ) : isAbsoluteUrl(href) ? (
+            <a
+              key={`${title}-${href}`}
+              href={href}
               className={`hover:text-primary text-sm font-medium transition-colors ${isActive ? '' : 'text-muted-foreground'}`}
             >
               {title}

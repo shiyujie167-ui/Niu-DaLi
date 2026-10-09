@@ -86,6 +86,17 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
+  // Infinite Canvas — a separate workspace (infinite-canvas) served on its own
+  // origin. It shows up as soon as its URL is configured in
+  // Settings → System Information (`general_setting.canvas_link`); leaving that
+  // field empty hides the entry.
+  const canvasLink: string | undefined = status?.canvas_link as
+    | string
+    | undefined
+  if (canvasLink && canvasLink.trim()) {
+    links.push({ title: t('Infinite canvas'), href: canvasLink.trim() })
+  }
+
   // Docs (supports external links)
   if (modules?.docs !== false) {
     if (docsLink) {

@@ -1,0 +1,183 @@
+{
+  "app": "infinite-canvas",
+  "version": 1,
+  "exportedAt": "2026-10-09T05:34:02.967Z",
+  "config": {
+    "channelMode": "local",
+    "baseUrl": "https://api.openai.com",
+    "apiKey": "",
+    "apiFormat": "openai",
+    "channels": [
+      {
+        "id": "default",
+        "name": "默认渠道",
+        "baseUrl": "https://api.openai.com",
+        "apiKey": "",
+        "apiFormat": "openai",
+        "models": [
+          {
+            "name": "gpt-image-2",
+            "capability": "image"
+          },
+          {
+            "name": "grok-imagine-video",
+            "capability": "video"
+          },
+          {
+            "name": "gpt-5.5",
+            "capability": "text"
+          },
+          {
+            "name": "gpt-4o-mini-tts",
+            "capability": "audio"
+          }
+        ]
+      },
+      {
+        "id": "zhi168",
+        "name": "大力牛视频 · zhi168",
+        "baseUrl": "https://www.zhi168.it.com/api/openai",
+        "apiKey": "",
+        "apiFormat": "openai",
+        "models": [
+          {
+            "name": "Sd-2.0满血933",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          },
+          {
+            "name": "minmax-h3",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          },
+          {
+            "name": "Sd-2.5",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          },
+          {
+            "name": "Sd-2.0fast",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          },
+          {
+            "name": "Sd-2.0mini",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          },
+          {
+            "name": "wan-3.0",
+            "capability": "video",
+            "script": "// zhi168 native video API. baseUrl stays /api/openai for model discovery.\nconst root = new URL(baseUrl).origin;\nconst headers = { \"X-API-Key\": apiKey };\nconst call = async (options) => {\n  try {\n    return await request({ ...options, headers: { ...headers, ...options.headers } });\n  } catch (error) {\n    const detail = error?.response?.data?.detail;\n    throw new Error(typeof detail === \"string\" ? detail : error.message);\n  }\n};\nconst catalog = await call({ method: \"get\", url: `${root}/api/v1/models` });\nconst selected = catalog.find((entry) => entry.model_code === model && entry.capability === \"video\");\nif (!selected) throw new Error(`当前 API 无可用视频模型：${model}`);\nconst supported = selected.supported_params || {};\nconst duration = Number(params.seconds || selected.default_params.duration_seconds);\nconst resolution = String(params.resolution || selected.default_params.resolution);\nconst ratio = params.ratio && params.ratio !== \"auto\" ? params.ratio : selected.default_params.aspect_ratio || \"16:9\";\nif (supported.resolution?.length && !supported.resolution.includes(resolution)) {\n  throw new Error(`${model} 支持的分辨率：${supported.resolution.join(\"、\")}，请调整视频设置`);\n}\nif (supported.aspect_ratio?.length && !supported.aspect_ratio.includes(ratio)) {\n  throw new Error(`${model} 支持的比例：${supported.aspect_ratio.join(\"、\")}`);\n}\nconst durations = supported.duration_seconds || {};\nif ((durations.options?.length && !durations.options.includes(duration)) || (durations.min !== undefined && duration < durations.min) || (durations.max !== undefined && duration > durations.max)) {\n  throw new Error(`${model} 的时长不支持 ${duration} 秒，请按模型支持范围调整`);\n}\nconst fields = { model_code: model, prompt, duration_seconds: duration, resolution, aspect_ratio: ratio, with_audio: params.generateAudio !== false };\nlet created;\nif (images.length || videos.length || audios.length) {\n  const form = new FormData();\n  for (const [name, value] of Object.entries(fields)) form.set(name, String(value));\n  for (const image of images) {\n    if (/^https?:\\/\\//i.test(image)) form.append(\"reference_image_urls\", image);\n    else form.append(\"reference_images\", await (await fetch(image)).blob(), \"reference.png\");\n  }\n  for (const video of videos) form.append(\"video_files\", video);\n  for (const audio of audios) form.append(\"audio_files\", audio);\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks/multipart`, data: form });\n} else {\n  created = await call({ method: \"post\", url: `${root}/api/v1/video-tasks`, headers: { \"Content-Type\": \"application/json\" }, data: fields });\n}\nif (!created.task_id) throw new Error(\"视频接口未返回任务 ID\");\nreturn await poll(\n  () => call({ method: \"get\", url: `${root}/api/v1/video-tasks/${encodeURIComponent(created.task_id)}` }),\n  (task) => {\n    if ([\"failed\", \"cancelled\", \"canceled\"].includes(task.status)) throw new Error(task.error_message || \"视频生成失败\");\n    if (task.status !== \"succeeded\") return null;\n    if (!task.result_url) throw new Error(\"任务成功但未返回视频地址\");\n    return { url: task.result_url };\n  },\n);\n"
+          }
+        ]
+      }
+    ],
+    "model": "default::gpt-image-2",
+    "imageModel": "default::gpt-image-2",
+    "videoModel": "zhi168::Sd-2.0fast",
+    "textModel": "default::gpt-5.5",
+    "audioModel": "default::gpt-4o-mini-tts",
+    "audioVoice": "alloy",
+    "audioFormat": "mp3",
+    "audioSpeed": "1",
+    "audioInstructions": "",
+    "videoSeconds": "4",
+    "vquality": "720",
+    "videoGenerateAudio": "true",
+    "videoWatermark": "false",
+    "videoMode": "reference",
+    "systemPrompt": "",
+    "reasoningEffort": "auto",
+    "models": [
+      "default::gpt-image-2",
+      "default::grok-imagine-video",
+      "default::gpt-5.5",
+      "default::gpt-4o-mini-tts",
+      "zhi168::Sd-2.0满血933",
+      "zhi168::minmax-h3",
+      "zhi168::Sd-2.5",
+      "zhi168::Sd-2.0fast",
+      "zhi168::Sd-2.0mini",
+      "zhi168::wan-3.0"
+    ],
+    "quality": "auto",
+    "size": "16:9",
+    "background": "",
+    "count": "1",
+    "canvasImageCount": "3",
+    "proxyEnabled": true,
+    "proxyUrl": "http://127.0.0.1:23210"
+  },
+  "webdav": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "directory": "infinite-canvas",
+    "lastSyncedAt": ""
+  },
+  "promptSources": {
+    "sources": [
+      {
+        "id": "banana-prompt-quicker",
+        "name": "Banana Prompt Quicker",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/banana-prompt-quicker.json",
+        "homepage": "https://glidea.github.io/banana-prompt-quicker/",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "davidwu-gpt-image2-prompts",
+        "name": "DavidWu GPT Image 2",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/davidwu-gpt-image2-prompts.json",
+        "homepage": "https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "freestylefly-gpt-image-2",
+        "name": "Freestylefly GPT Image 2",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/freestylefly-gpt-image-2.json",
+        "homepage": "https://github.com/freestylefly/awesome-gpt-image-2",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "awesome-gpt-image",
+        "name": "Awesome GPT Image",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/awesome-gpt-image.json",
+        "homepage": "https://github.com/ZeroLu/awesome-gpt-image",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "awesome-gpt4o-image-prompts",
+        "name": "Awesome GPT-4o",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/awesome-gpt4o-image-prompts.json",
+        "homepage": "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "youmind-gpt-image-2",
+        "name": "YouMind GPT Image 2",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/youmind-gpt-image-2.json",
+        "homepage": "https://github.com/YouMind-OpenLab/awesome-gpt-image-2",
+        "enabled": true,
+        "builtIn": true
+      },
+      {
+        "id": "youmind-nano-banana-pro",
+        "name": "YouMind Nano Banana Pro",
+        "url": "https://raw.githubusercontent.com/yukkcat/image-prompts/main/dist/sources/youmind-nano-banana-pro.json",
+        "homepage": "https://github.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts",
+        "enabled": true,
+        "builtIn": true
+      }
+    ],
+    "schedule": {
+      "intervalMinutes": 30,
+      "lastFetchedAt": "2026-10-09T05:22:02.412Z"
+    }
+  }
+}

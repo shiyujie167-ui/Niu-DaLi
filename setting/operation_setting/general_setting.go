@@ -11,7 +11,10 @@ const (
 )
 
 type GeneralSetting struct {
-	DocsLink            string `json:"docs_link"`
+	DocsLink string `json:"docs_link"`
+	// 无限画布（infinite-canvas）入口地址，配置后顶栏展示「无限画布」并跳转到该地址；
+	// 留空则不展示该入口。
+	CanvasLink          string `json:"canvas_link"`
 	PingIntervalEnabled bool   `json:"ping_interval_enabled"`
 	PingIntervalSeconds int    `json:"ping_interval_seconds"`
 	// 当前站点额度展示类型：USD / CNY / TOKENS
