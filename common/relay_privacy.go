@@ -9,6 +9,46 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// RelayErrorPassthroughHeader overrides RelayErrorPassthrough for one request.
+// "true" forwards upstream errors verbatim, "false" restores the privacy
+// template. Unset or unparsable values fall back to the global setting.
+const RelayErrorPassthroughHeader = "X-Error-Passthrough"
+
+// RelayErrorPassthroughNoHeader is the inverted spelling of the same switch:
+// operators ask for it as "X-Error-No", where true means "do not hand the
+// upstream error back". Its default (absent/false) therefore matches the
+// pass-through default. Unlike the header above, this one is negative, so the
+// parsed value is inverted before use.
+const RelayErrorPassthroughNoHeader = "X-Error-No"
+
+// RelayErrorPassthroughFor resolves the effective error pass-through mode for a
+// request. getHeader is called with the two header names above; passing nil
+// reads the global setting only.
+func RelayErrorPassthroughFor(getHeader func(string) string) bool {
+	if getHeader != nil {
+		if value, ok := parseOptionalBool(getHeader(RelayErrorPassthroughHeader)); ok {
+			return value
+		}
+		if value, ok := parseOptionalBool(getHeader(RelayErrorPassthroughNoHeader)); ok {
+			return !value
+		}
+	}
+	return RelayErrorPassthrough
+}
+
+// parseOptionalBool reports a recognised boolean and whether the value carried
+// one. An unknown value is ignored rather than treated as false, so a typo
+// cannot silently turn error redaction back on.
+func parseOptionalBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "t", "true", "yes", "on":
+		return true, true
+	case "0", "f", "false", "no", "off":
+		return false, true
+	}
+	return false, false
+}
+
 // PublicRelayFailureMessage keeps upstream diagnostics out of client responses.
 func PublicRelayFailureMessage(requestID string) string {
 	return MessageWithRequestId("The model request failed. Contact support with the request ID.", requestID)
@@ -18,7 +58,23 @@ func PublicRelayFailureMessage(requestID string) string {
 // Only protocol envelopes are inspected: generated text, tool arguments, image
 // data and user metadata must never be traversed or rewritten. Callers retain
 // the original upstream bytes for usage accounting and server-side diagnostics.
+//
+// When redactErrors is set, upstream failure text is replaced as well; when it
+// is clear only gateway provenance is removed. See PassthroughRelayJSON for the
+// pass-through contract.
 func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
+	return publicRelayJSON(data, requestID, redactErrors, redactErrors)
+}
+
+// PassthroughRelayJSON is PublicRelayJSON for relay error pass-through. It
+// strips gateway provenance (channel names, upstream URLs, cost fields) but
+// leaves upstream error codes and messages byte-for-byte intact, so a client
+// can act on the upstream's own diagnosis.
+func PassthroughRelayJSON(data []byte) []byte {
+	return publicRelayJSON(data, "", false, false)
+}
+
+func publicRelayJSON(data []byte, requestID string, redactErrors, redactFailureFields bool) []byte {
 	if !gjson.ValidBytes(data) {
 		return data
 	}
@@ -26,7 +82,7 @@ func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
 		items := gjson.ParseBytes(data).Array()
 		public := make([]RawMessage, len(items))
 		for i, item := range items {
-			public[i] = PublicRelayJSON([]byte(item.Raw), requestID, redactErrors)
+			public[i] = publicRelayJSON([]byte(item.Raw), requestID, redactErrors, redactFailureFields)
 		}
 		if clean, err := Marshal(public); err == nil {
 			return clean
@@ -48,14 +104,16 @@ func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
 			}
 		}
 	}
-	for _, prefix := range prefixes {
-		for _, field := range []string{"fail_reason", "failReason", "failure_reason", "error_message"} {
-			value := gjson.GetBytes(data, prefix+field)
-			if !value.Exists() || value.Type == gjson.Null || value.Raw == `""` {
-				continue
-			}
-			if clean, err := sjson.SetBytes(data, prefix+field, PublicRelayFailureMessage(requestID)); err == nil {
-				data = clean
+	if redactFailureFields {
+		for _, prefix := range prefixes {
+			for _, field := range []string{"fail_reason", "failReason", "failure_reason", "error_message"} {
+				value := gjson.GetBytes(data, prefix+field)
+				if !value.Exists() || value.Type == gjson.Null || value.Raw == `""` {
+					continue
+				}
+				if clean, err := sjson.SetBytes(data, prefix+field, PublicRelayFailureMessage(requestID)); err == nil {
+					data = clean
+				}
 			}
 		}
 	}
@@ -133,7 +191,11 @@ func PublicRelayJSON(data []byte, requestID string, redactErrors bool) []byte {
 
 // PublicRelaySSE filters complete SSE frames, including multiline data events.
 // Comments and event framing are kept; [DONE] is not interpreted as JSON.
-func PublicRelaySSE(frame []byte, requestID string) []byte {
+//
+// redactErrors selects the error policy for the payload: true replaces upstream
+// failure text with the privacy template, false (relay error pass-through)
+// removes gateway provenance only and keeps the upstream error as written.
+func PublicRelaySSE(frame []byte, requestID string, redactErrors bool) []byte {
 	newline := []byte("\n")
 	if bytes.Contains(frame, []byte("\r\n")) {
 		newline = []byte("\r\n")
@@ -160,14 +222,16 @@ func PublicRelaySSE(frame []byte, requestID string) []byte {
 		return frame
 	}
 	input := payload
-	if errorEvent {
+	if errorEvent && redactErrors {
+		// The client needs a parseable error envelope to react to. Under
+		// pass-through an unparsable frame is forwarded as the upstream wrote it.
 		if !gjson.ValidBytes(input) {
 			input = []byte(`{"type":"error"}`)
 		} else if clean, err := sjson.SetBytes(input, "type", "error"); err == nil {
 			input = clean
 		}
 	}
-	clean := PublicRelayJSON(input, requestID, true)
+	clean := publicRelayJSON(input, requestID, redactErrors, redactErrors)
 	if bytes.Equal(clean, payload) {
 		return frame
 	}

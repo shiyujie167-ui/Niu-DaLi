@@ -114,12 +114,19 @@ type responsesWSSession struct {
 	lockedKeyIndex  int
 	lockedContext   map[appconstant.ContextKey]any
 	lockedRoute     dto.AdvancedCustomRoute
+
+	// redactErrors is resolved once at handshake time, because the session loop
+	// only carries a context.Context and the switch must not change half-way
+	// through a conversation. See common.RelayErrorPassthrough. The zero value
+	// matches the shipped default: upstream errors pass through.
+	redactErrors bool
 }
 
 func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner ResponsesWSRequestRunner) *types.NewAPIError {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	s := &responsesWSSession{ctx: ctx, cancel: cancel, client: client, runner: runner,
-		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey)}
+		request: c.Request.Clone(ctx), requestID: c.GetString(common.RequestIdKey),
+		redactErrors: !common.RelayErrorPassthroughFor(c.GetHeader)}
 	if s.requestID == "" {
 		s.requestID = common.NewRequestId()
 	}
@@ -195,7 +202,7 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		if outgoing != nil {
 			if err := s.client.SetWriteDeadline(time.Now().Add(responsesWSWriteTimeout)); err != nil {
 				state.closeAfter = true
-			} else if err := s.client.WriteMessage(outgoing.kind, common.PublicRelayJSON(outgoing.body, requestID, true)); err != nil {
+			} else if err := s.client.WriteMessage(outgoing.kind, common.PublicRelayJSON(outgoing.body, requestID, s.redactErrors)); err != nil {
 				state.closeAfter = true
 			}
 		}
@@ -699,13 +706,16 @@ func (s *responsesWSSession) writeTarget(kind int, message []byte) error {
 	return target.WriteMessage(kind, message)
 }
 
+// writeClient sends one frame to the client. upstream marks frames that carry
+// an upstream diagnosis; those are the only ones the privacy policy touches, so
+// under error pass-through they are forwarded as written.
 func (s *responsesWSSession) writeClient(kind int, message []byte, upstream bool) error {
 	s.clientWriteMu.Lock()
 	defer s.clientWriteMu.Unlock()
 	if err := s.client.SetWriteDeadline(time.Now().Add(responsesWSWriteTimeout)); err != nil {
 		return err
 	}
-	return s.client.WriteMessage(kind, common.PublicRelayJSON(message, s.requestID, upstream))
+	return s.client.WriteMessage(kind, common.PublicRelayJSON(message, s.requestID, upstream && s.redactErrors))
 }
 
 func (s *responsesWSSession) sendError(eventID, streamID string, apiErr *types.NewAPIError) {

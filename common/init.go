@@ -29,6 +29,12 @@ func printHelp() {
 	fmt.Println("Usage: newapi [--port <port>] [--log-dir <log directory>] [--version] [--help]")
 }
 
+// DefaultRelayResponseHeaderTimeout is the wait budget, in seconds, for a
+// non-streaming relay call to receive its response headers. Long Claude
+// reasoning requests are the reason it is an hour rather than the previous 30
+// minutes; see RELAY_RESPONSE_HEADER_TIMEOUT.
+const DefaultRelayResponseHeaderTimeout = 3600
+
 func InitEnv() {
 	flag.Parse()
 
@@ -112,9 +118,19 @@ func InitEnv() {
 	BatchUpdateInterval = GetEnvOrDefault("BATCH_UPDATE_INTERVAL", 5)
 	RelayTimeout = GetEnvOrDefault("RELAY_TIMEOUT", 0)
 	RelayIdleConnTimeout = GetEnvOrDefault("RELAY_IDLE_CONN_TIMEOUT", 90)
-	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", 1800)
+	// RelayResponseHeaderTimeout bounds how long a non-streaming relay waits for
+	// the upstream to start responding. Claude reasoning requests routinely run
+	// past 30 minutes, so the default matches the one-hour non-stream budget
+	// operators publish to clients. Set RELAY_RESPONSE_HEADER_TIMEOUT to a lower
+	// value to fail fast instead.
+	RelayResponseHeaderTimeout = GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", DefaultRelayResponseHeaderTimeout)
 	RelayMaxIdleConns = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS", 500)
 	RelayMaxIdleConnsPerHost = GetEnvOrDefault("RELAY_MAX_IDLE_CONNS_PER_HOST", 100)
+
+	// RelayErrorPassthrough forwards upstream error payloads to clients. See
+	// common.RelayErrorPassthrough for the contract; the RelayErrorPassthrough
+	// option can override it at runtime.
+	RelayErrorPassthrough = GetEnvOrDefaultBool("RELAY_ERROR_PASSTHROUGH", true)
 
 	// Initialize string variables with GetEnvOrDefaultString
 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")

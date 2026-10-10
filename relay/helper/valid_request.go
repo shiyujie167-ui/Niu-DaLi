@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 
@@ -288,6 +289,65 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	return imageRequest, nil
 }
 
+// claudeMessageRoles are the roles the Messages API accepts on an input
+// message. Anthropic documents "user" and "assistant" for the conversation and
+// keeps "system" in the schema, so it is accepted here as well; only values no
+// Claude model accepts are rejected.
+var claudeMessageRoles = map[string]bool{"user": true, "assistant": true, "system": true}
+
+// validateClaudeRequest enforces the Messages API contract for native
+// /v1/messages traffic.
+//
+// A compatibility gateway must not repair a request it cannot serve faithfully.
+// When a parameter is invalid, the caller needs the same failure it would get
+// from Anthropic, otherwise it ships code that only works through this gateway.
+// This is deliberately limited to the native Claude format: requests converted
+// from another protocol are rendered from that protocol's own fields, where a
+// missing or differently-shaped value is expected rather than an error.
+//
+// Deliberately NOT enforced:
+//   - max_tokens == 0. Anthropic defines 0 as "populate the prompt cache", and
+//     relay/channel/claude/adaptor.go maps both 0 and a missing max_tokens to
+//     the per-model default. See
+//     TestConvertClaudeRequestTreatsZeroMaxTokensAsUnset.
+//   - Unknown JSON fields. Vendor extensions (chat_template_kwargs,
+//     context_management, mcp_servers, output_config, ...) are forwarded
+//     verbatim.
+func validateClaudeRequest(request *dto.ClaudeRequest) error {
+	for i, message := range request.Messages {
+		if !claudeMessageRoles[message.Role] {
+			return fmt.Errorf("messages.%d.role: %q is not a valid role; expected \"user\", \"assistant\" or \"system\"", i, message.Role)
+		}
+	}
+
+	strictSampling := reasoning.ClaudeRequiresStrictSampling(request.Model)
+	if request.Temperature != nil {
+		switch {
+		case strictSampling && *request.Temperature != 1:
+			return fmt.Errorf("temperature: %v is not supported by model %q; omit temperature or use 1.0", *request.Temperature, request.Model)
+		case !strictSampling && (*request.Temperature < 0 || *request.Temperature > 1):
+			return fmt.Errorf("temperature: %v is out of range; expected 0.0 to 1.0", *request.Temperature)
+		}
+	}
+	if request.TopP != nil {
+		switch {
+		case strictSampling && (*request.TopP < 0.99 || *request.TopP > 1):
+			return fmt.Errorf("top_p: %v is not supported by model %q; omit top_p or use 0.99 to 1.0", *request.TopP, request.Model)
+		case !strictSampling && (*request.TopP <= 0 || *request.TopP > 1):
+			return fmt.Errorf("top_p: %v is out of range; expected greater than 0.0 and at most 1.0", *request.TopP)
+		}
+	}
+	if request.TopK != nil {
+		if strictSampling {
+			return fmt.Errorf("top_k: model %q does not accept top_k; omit it", request.Model)
+		}
+		if *request.TopK < 0 {
+			return fmt.Errorf("top_k: %d is out of range; expected 0 or greater", *request.TopK)
+		}
+	}
+	return nil
+}
+
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {
 	textRequest = &dto.ClaudeRequest{}
 	err = common.UnmarshalBodyReusable(c, textRequest)
@@ -302,6 +362,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	}
 	if ExceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxTokensToSample) {
 		return nil, errors.New("max_tokens is invalid")
+	}
+	if err = validateClaudeRequest(textRequest); err != nil {
+		return nil, err
 	}
 
 	//if textRequest.Stream {

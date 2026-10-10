@@ -33,7 +33,154 @@ func privacyRouter(handler gin.HandlerFunc) *gin.Engine {
 	return engine
 }
 
+// withErrorRedaction runs a test under the privacy policy, where upstream error
+// text is replaced by the template message. The gateway default is pass-through
+// (common.RelayErrorPassthrough), so every test that asserts redaction has to
+// ask for it explicitly.
+func withErrorRedaction(t *testing.T) {
+	t.Helper()
+	previous := common.RelayErrorPassthrough
+	common.RelayErrorPassthrough = false
+	t.Cleanup(func() { common.RelayErrorPassthrough = previous })
+}
+
+// withErrorPassthrough pins the gateway default for tests that assert that
+// upstream diagnostics reach the client untouched.
+func withErrorPassthrough(t *testing.T) {
+	t.Helper()
+	previous := common.RelayErrorPassthrough
+	common.RelayErrorPassthrough = true
+	t.Cleanup(func() { common.RelayErrorPassthrough = previous })
+}
+
+// TestRelayErrorPassthroughForwardsUpstreamDiagnostics pins the default policy:
+// a rejected request must reach the client with the upstream's own status and
+// reason, because that reason is what the client needs to fix its call. Gateway
+// provenance (channel, upstream host, cost) still never leaves the gateway.
+func TestRelayErrorPassthroughForwardsUpstreamDiagnostics(t *testing.T) {
+	withErrorPassthrough(t)
+
+	const upstream = `{"error":{"type":"invalid_request_error","message":"claude-opus-5-5 requires adaptive thinking; omit thinking or use thinking.type=adaptive"},"channel_name":"private-provider","upstream_url":"https://private.invalid","system_fingerprint":"private-fingerprint"}`
+	engine := privacyRouter(func(c *gin.Context) {
+		c.Set("channel_id", 28)
+		c.Data(http.StatusBadRequest, "application/json", []byte(upstream))
+	})
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code, "the upstream status must not be rewritten")
+	assert.Contains(t, recorder.Body.String(), "requires adaptive thinking", "the upstream reason must reach the client")
+	assert.Contains(t, recorder.Body.String(), "invalid_request_error", "the upstream error type must be preserved")
+	for _, leaked := range []string{"private-provider", "private.invalid", "private-fingerprint"} {
+		assert.NotContains(t, recorder.Body.String(), leaked, "gateway provenance must stay private")
+	}
+}
+
+// TestRelayErrorPassthroughKeepsNonJSONErrorBodies covers the case that used to
+// be flattened to a template: an HTML or plain-text error from the upstream is
+// returned as-is, still under its own status code.
+func TestRelayErrorPassthroughKeepsNonJSONErrorBodies(t *testing.T) {
+	withErrorPassthrough(t)
+
+	const body = "<html>rate limited by upstream</html>"
+	engine := privacyRouter(func(c *gin.Context) {
+		c.Set("channel_id", 28)
+		c.Data(http.StatusTooManyRequests, "text/html", []byte(body))
+	})
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
+
+	assert.Equal(t, http.StatusTooManyRequests, recorder.Code)
+	assert.Equal(t, body, recorder.Body.String())
+}
+
+// TestRelayErrorPassthroughHeaderOverride covers the per-request switch:
+// X-Error-Passthrough is the positive spelling, X-Error-No the negative one the
+// operators asked for, and an unparsable value must fall back to the global
+// setting rather than silently enabling redaction.
+func TestRelayErrorPassthroughHeaderOverride(t *testing.T) {
+	const upstream = `{"error":{"type":"invalid_request_error","message":"upstream said no"}}`
+
+	for _, tc := range []struct {
+		name          string
+		global        bool
+		header, value string
+		wantUpstream  bool
+	}{
+		{"global passthrough, no header", true, "", "", true},
+		{"global redaction, no header", false, "", "", false},
+		{"explicit passthrough off", true, common.RelayErrorPassthroughHeader, "false", false},
+		{"explicit passthrough on", false, common.RelayErrorPassthroughHeader, "true", true},
+		{"passthrough on wins over header in redaction mode", false, common.RelayErrorPassthroughHeader, "1", true},
+		{"legacy X-Error-No true hides", true, common.RelayErrorPassthroughNoHeader, "true", false},
+		{"legacy X-Error-No false passes through", false, common.RelayErrorPassthroughNoHeader, "false", true},
+		{"unparsable value keeps the global setting", true, common.RelayErrorPassthroughHeader, "maybe", true},
+		{"unparsable legacy value keeps the global setting", false, common.RelayErrorPassthroughHeader, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := common.RelayErrorPassthrough
+			common.RelayErrorPassthrough = tc.global
+			t.Cleanup(func() { common.RelayErrorPassthrough = previous })
+
+			engine := privacyRouter(func(c *gin.Context) {
+				c.Set("channel_id", 28)
+				c.Data(http.StatusBadRequest, "application/json", []byte(upstream))
+			})
+			request := httptest.NewRequest(http.MethodPost, "/test", nil)
+			if tc.header != "" && tc.value != "" {
+				request.Header.Set(tc.header, tc.value)
+			}
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusBadRequest, recorder.Code)
+			if tc.wantUpstream {
+				assert.Contains(t, recorder.Body.String(), "upstream said no")
+			} else {
+				assert.NotContains(t, recorder.Body.String(), "upstream said no")
+				assert.Contains(t, recorder.Body.String(), "local-request")
+			}
+		})
+	}
+}
+
+// TestRelayErrorPassthroughKeepsSSEErrorFrames checks the streaming path, where
+// the sanitizer works frame by frame.
+func TestRelayErrorPassthroughKeepsSSEErrorFrames(t *testing.T) {
+	withErrorPassthrough(t)
+
+	const frame = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"upstream said no\"}}\n\n"
+	engine := privacyRouter(func(c *gin.Context) {
+		c.Set("channel_id", 28)
+		c.Header("Content-Type", "text/event-stream")
+		_, err := c.Writer.WriteString(frame)
+		require.NoError(t, err)
+		c.Writer.Flush()
+	})
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
+
+	assert.Contains(t, recorder.Body.String(), "upstream said no")
+	assert.Contains(t, recorder.Body.String(), "event: error")
+
+	previous := common.RelayErrorPassthrough
+	common.RelayErrorPassthrough = false
+	t.Cleanup(func() { common.RelayErrorPassthrough = previous })
+	engine = privacyRouter(func(c *gin.Context) {
+		c.Set("channel_id", 28)
+		c.Header("Content-Type", "text/event-stream")
+		_, err := c.Writer.WriteString(frame)
+		require.NoError(t, err)
+		c.Writer.Flush()
+	})
+	recorder = httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/test", nil))
+	assert.NotContains(t, recorder.Body.String(), "upstream said no")
+	assert.Contains(t, recorder.Body.String(), "local-request")
+}
+
 func TestRelayPrivacyAcrossProtocols(t *testing.T) {
+	withErrorRedaction(t)
 	for _, tc := range []struct{ name, body string }{
 		{"chat", `{"id":"completion-id","model":"customer-model","choices":[{"message":{"content":"usage_source private-worker"}}],"system_fingerprint":"private-fingerprint","usage":{"total_tokens":10,"usage_source":"private-worker","usage_semantic":"estimated","cost":0.4,"billing_usage":{"source":"private-provider"}}}`},
 		{"responses", `{"type":"response.completed","response":{"id":"response-id","system_fingerprint":"private-fingerprint","usage":{"input_tokens":10,"usage_source":"private-worker"}},"output":[{"text":"usage_source private-worker"}]}`},
@@ -144,6 +291,7 @@ func TestRelayPrivacyKeepsImageAccountingAndBinaryMedia(t *testing.T) {
 }
 
 func TestRelayPrivacyHidesErrorDiagnostics(t *testing.T) {
+	withErrorRedaction(t)
 	for _, tc := range []struct {
 		name              string
 		status            int
@@ -189,7 +337,7 @@ func TestRelayPrivacyHidesErrorDiagnostics(t *testing.T) {
 	assert.Contains(t, string(clean), "resume-id")
 	assert.Contains(t, string(original), "private-worker")
 	multiline := []byte("event: message\r\ndata: {\"usage\":\r\ndata: {\"total_tokens\":7,\"usage_source\":\"private-worker\"}}\r\n\r\n")
-	result := common.PublicRelaySSE(multiline, "request")
+	result := common.PublicRelaySSE(multiline, "request", true)
 	assert.NotContains(t, string(result), "private-worker")
 	assert.Contains(t, string(result), "event: message")
 	assert.Contains(t, string(result), `"total_tokens":7`)
@@ -257,7 +405,7 @@ func TestRelayPrivacyLeavesLocalValidationAndPricingIntact(t *testing.T) {
 	engine.ServeHTTP(recorder, httptest.NewRequest("GET", "/api/pricing", nil))
 	assert.JSONEq(t, `{"billing_expr":"customer-price-expression","group_ratio":1}`, recorder.Body.String())
 	for _, frame := range []string{"event: error\ndata: private-worker secret\n\n", "event: error\ndata: {\"message\":\"private-worker secret\"}\n\n"} {
-		clean := common.PublicRelaySSE([]byte(frame), "local-request")
+		clean := common.PublicRelaySSE([]byte(frame), "local-request", true)
 		assert.NotContains(t, string(clean), "private-worker")
 		assert.NotContains(t, string(clean), "secret")
 		assert.Contains(t, string(clean), "local-request")

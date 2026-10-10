@@ -136,6 +136,27 @@ var PreConsumedQuota = 500
 
 var RetryTimes = 0
 
+// RelayErrorPassthrough forwards upstream error payloads and HTTP statuses to
+// clients unchanged. A compatibility gateway must not silently repair a failed
+// request: when the upstream rejects it, the client needs the real status and
+// the real reason in order to fix its call.
+//
+// When false, the relay privacy layer replaces upstream diagnostics with a
+// generic template message plus the local request ID (see
+// common.PublicRelayFailureMessage). Individual requests may override this with
+// the X-Error-Passthrough / X-Error-No headers, see
+// common.RelayErrorPassthroughFor.
+//
+// Scope: every relay response path — HTTP JSON, relay SSE, the Responses
+// WebSocket, and realtime. Gateway provenance (channel names, upstream URLs,
+// cost fields) is stripped in both modes; only the upstream's own diagnosis
+// changes. The async task query endpoint is NOT covered: it hides failure
+// details from non-admin viewers on purpose, see controller/task.go.
+//
+// Default: true. Persisted as the RelayErrorPassthrough option and overridable
+// with the RELAY_ERROR_PASSTHROUGH environment variable.
+var RelayErrorPassthrough = true
+
 //var RootUserEmail = ""
 
 var IsMasterNode bool
