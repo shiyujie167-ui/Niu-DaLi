@@ -1,0 +1,69 @@
+{
+  "app": "infinite-canvas",
+  "version": 1,
+  "exportedAt": "2026-10-10T00:00:00.000Z",
+  "config": {
+    "channelMode": "local",
+    "baseUrl": "https://8.216.57.93",
+    "apiKey": "",
+    "apiFormat": "openai",
+    "channels": [
+      {
+        "id": "default",
+        "name": "默认渠道",
+        "baseUrl": "https://8.216.57.93",
+        "apiKey": "",
+        "apiFormat": "openai",
+        "models": [
+          { "name": "Sd-2.0fast", "capability": "video" },
+          { "name": "Sd-2.0满血933", "capability": "video" },
+          { "name": "Sd-2.5", "capability": "video" },
+          { "name": "minmax-h3", "capability": "video" }
+        ]
+      }
+    ],
+    "model": "",
+    "imageModel": "",
+    "videoModel": "default::Sd-2.0fast",
+    "textModel": "",
+    "audioModel": "",
+    "audioVoice": "alloy",
+    "audioFormat": "mp3",
+    "audioSpeed": "1",
+    "audioInstructions": "",
+    "videoSeconds": "4",
+    "vquality": "720",
+    "videoGenerateAudio": "true",
+    "videoWatermark": "false",
+    "videoMode": "reference",
+    "systemPrompt": "",
+    "reasoningEffort": "auto",
+    "models": [
+      "default::Sd-2.0fast",
+      "default::Sd-2.0满血933",
+      "default::Sd-2.5",
+      "default::minmax-h3"
+    ],
+    "quality": "auto",
+    "size": "16:9",
+    "background": "",
+    "count": "1",
+    "canvasImageCount": "3",
+    "proxyEnabled": false,
+    "proxyUrl": "http://127.0.0.1:23210"
+  },
+  "webdav": {
+    "url": "",
+    "username": "",
+    "password": "",
+    "directory": "infinite-canvas",
+    "lastSyncedAt": ""
+  },
+  "promptSources": {
+    "sources": [],
+    "schedule": {
+      "intervalMinutes": 30,
+      "lastFetchedAt": ""
+    }
+  }
+}

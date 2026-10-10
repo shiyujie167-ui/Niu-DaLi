@@ -181,29 +181,44 @@ describe('audit log sidebar entry', () => {
   })
 })
 
-describe('video workspace sidebar visibility', () => {
-  it('legacy chat settings show the video workspace alongside the playground', () => {
+describe('chat sidebar after external canvas integration', () => {
+  it('legacy chat settings retain Playground and Chat without the retired video workspace entry', () => {
     const { result } = sidebarFor({ chat: { enabled: true, playground: true } })
-    expect(result.current.find((group) => group.id === 'chat')?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          title: 'Video workspace',
-          url: '/video-workspace',
-        }),
-      ])
-    )
+    expect(
+      result.current.find((group) => group.id === 'chat')?.items
+    ).toMatchObject([
+      { title: 'Playground', url: '/playground' },
+      { title: 'Chat', type: 'chat-presets' },
+    ])
   })
 
   it.each([
-    [{ chat: { enabled: false } }, undefined],
-    [{ chat: { enabled: true, videoWorkspace: false } }, undefined],
-    [undefined, { chat: { enabled: true, videoWorkspace: false } }],
-  ])('respects admin and personal video visibility (%j, %j)', (admin, user) => {
-    const { result } = sidebarFor(admin, user)
-    expect(
-      result.current
-        .flatMap((group) => group.items)
-        .some((item) => item.title === 'Video workspace')
-    ).toBe(false)
-  })
+    [{ chat: { enabled: false } }, undefined, []],
+    [undefined, { chat: { enabled: false } }, []],
+    [
+      { chat: { enabled: true, videoWorkspace: false } },
+      undefined,
+      ['Playground', 'Chat'],
+    ],
+    [
+      undefined,
+      { chat: { enabled: true, videoWorkspace: false } },
+      ['Playground', 'Chat'],
+    ],
+    [
+      { chat: { enabled: true, videoWorkspace: true } },
+      { chat: { videoWorkspace: true } },
+      ['Playground', 'Chat'],
+    ],
+  ])(
+    'chat visibility respects section settings while legacy video settings do not restore the retired entry (%j, %j)',
+    (admin, user, titles) => {
+      const { result } = sidebarFor(admin, user)
+      expect(
+        result.current
+          .find((group) => group.id === 'chat')
+          ?.items.map((item) => item.title) ?? []
+      ).toEqual(titles)
+    }
+  )
 })

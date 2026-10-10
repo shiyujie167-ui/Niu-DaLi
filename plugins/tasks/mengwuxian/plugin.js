@@ -108,8 +108,14 @@ function referenceURLs(value, max, name) {
   return value.slice();
 }
 
+// OpenAI video clients upload reference frames under their own field names
+// (image[], first_frame, last_frame). The vendor API accepts any of them as a
+// reference_images part, so widen only the video entry points.
+const VIDEO_UPLOAD_FIELDS = ["input_reference", "reference_images", "image[]", "first_frame", "last_frame"];
+const IMAGE_UPLOAD_FIELDS = ["image", "image[]", "reference_images"];
+
 function referenceFiles(files, kind, config) {
-  const accepted = kind === "video" ? ["input_reference", "reference_images"] : ["image", "image[]", "reference_images"];
+  const accepted = kind === "video" ? VIDEO_UPLOAD_FIELDS : IMAGE_UPLOAD_FIELDS;
   const references = [];
   for (const file of files || []) {
     if (!accepted.includes(file.field)) throw new Error("Unsupported upload field: " + file.field);
@@ -119,6 +125,39 @@ function referenceFiles(files, kind, config) {
   }
   if (references.length > config.images) throw new Error("Too many reference images");
   return references;
+}
+
+// The OpenAI video wire (POST /v1/videos) spells a few parameters differently
+// from the vendor contract. Rewrite those aliases before validation so one
+// plugin serves both callers; parameters the vendor API has no equivalent for
+// are dropped rather than rejected, so an OpenAI client never has to know the
+// vendor's parameter set. Only the aliases are widened: a native with_audio
+// must still arrive as a real boolean.
+const OPENAI_VIDEO_ALIASES = {
+  resolution_name: { name: "resolution" },
+  generate_audio: { name: "with_audio", coerce: openAIWithAudio },
+};
+const OPENAI_VIDEO_IGNORED = ["watermark", "mode"];
+
+function openAIWithAudio(value) {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error("generate_audio must be a boolean");
+}
+
+function normalizeOpenAIVideoFields(value, kind) {
+  if (kind !== "video") return value;
+  const normalized = { ...value };
+  for (const key of OPENAI_VIDEO_IGNORED) delete normalized[key];
+  for (const key of Object.keys(OPENAI_VIDEO_ALIASES)) {
+    if (!Object.prototype.hasOwnProperty.call(normalized, key)) continue;
+    const target = OPENAI_VIDEO_ALIASES[key];
+    if (Object.prototype.hasOwnProperty.call(normalized, target.name)) throw new Error("Use only one of " + key + ", " + target.name);
+    normalized[target.name] = target.coerce ? target.coerce(normalized[key]) : normalized[key];
+    delete normalized[key];
+  }
+  return normalized;
 }
 
 function mediaRequest(req, model, kind, files) {
@@ -183,7 +222,7 @@ function mediaRequest(req, model, kind, files) {
 }
 
 function submitIntent(ctx, kind) {
-  const req = requestBody(ctx);
+  const req = normalizeOpenAIVideoFields(requestBody(ctx), kind);
   const model = ctx.model || req.model_code;
   const upstreamModel = ctx.upstreamModel || model;
   const files = ctx.body.files || [];

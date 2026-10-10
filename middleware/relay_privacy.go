@@ -173,9 +173,14 @@ func (w *relayPrivacyWriter) writeJSON(body []byte) error {
 		redactErrors := w.Status() < 400 || w.Status() >= 500 || w.ctx.GetInt("channel_id") > 0
 		if w.Status() >= 400 && redactErrors {
 			// Do not forward arbitrary sibling diagnostics from upstream errors.
-			originalError := gjson.GetBytes(body, "error").Raw
-			if originalError == "" {
-				originalError = "{}"
+			upstreamError := gjson.GetBytes(body, "error")
+			originalError := upstreamError.Raw
+			if !upstreamError.Exists() || upstreamError.Type == gjson.Null || originalError == `""` || originalError == "{}" {
+				publicError, err := common.Marshal(gin.H{"type": "api_error", "code": "upstream_error", "message": common.PublicRelayFailureMessage(w.ctx.GetString(common.RequestIdKey))})
+				if err != nil {
+					return err
+				}
+				originalError = string(publicError)
 			}
 			if gjson.GetBytes(body, "type").String() == "error" {
 				body = []byte(`{"type":"error","error":` + originalError + `}`)

@@ -56,6 +56,7 @@ const _systemInfoSchema = z.object({
   HomePageContent: z.string().optional(),
   general_setting: z.object({
     docs_link: z.string(),
+    canvas_link: z.string(),
   }),
   legal: z.object({
     user_agreement: z.string().optional(),
@@ -88,6 +89,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     HomePageContent: normalizeValue(defaultValues.HomePageContent),
     general_setting: {
       docs_link: normalizeValue(defaultValues.general_setting?.docs_link),
+      canvas_link: normalizeValue(defaultValues.general_setting?.canvas_link),
     },
     legal: {
       user_agreement: normalizeValue(defaultValues.legal?.user_agreement),
@@ -112,6 +114,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     HomePageContent: z.string().optional(),
     general_setting: z.object({
       docs_link: z.string(),
+      canvas_link: z.string(),
     }),
     legal: z.object({
       user_agreement: z.string().optional(),
@@ -248,6 +251,28 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     </FormControl>
                     <FormDescription>
                       {t('Link to your documentation site')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='general_setting.canvas_link'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Infinite canvas link')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={t('https://canvas.example.com')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'URL of the Infinite Canvas workspace shown in the header navigation. Leave empty to hide the entry.'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
