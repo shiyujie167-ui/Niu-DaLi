@@ -21,18 +21,20 @@ func newClaudeValidationContext(t *testing.T, body string) *gin.Context {
 	return c
 }
 
-// TestValidateClaudeRequestRejectsSilentlyIgnoredParameters covers the contract
-// that native /v1/messages traffic is not repaired on the way upstream.
+// TestValidateClaudeRequestEnforcesRolesAndRanges covers the two things a
+// native /v1/messages request is refused for: a role no Claude model accepts,
+// and a sampling value outside the documented ranges.
 //
-// Two rules apply, and which one is used depends on the model:
-//   - Models released after Claude Opus 4.6 reject the sampling controls
-//     entirely; Anthropic keeps only temperature=1.0, top_p>=0.99 and no top_k.
-//   - Older models, and aliases this gateway does not recognise, use the
-//     documented 0.0-1.0 / 0-or-greater ranges.
+// Sampling controls a model no longer accepts are deliberately NOT rejected
+// here. The converter clears them for such models on every entry point and
+// records claude_sampling_removed, so native /v1/messages behaves like
+// /v1/chat/completions instead of answering 400 for a request that succeeds on
+// the other protocol. See TestApplyReasoning* in
+// relaykit/relayconvert/internal/shared/claude.
 //
 // max_tokens=0 and a missing max_tokens are deliberately NOT errors: the Claude
 // adaptor turns both into the per-model default.
-func TestValidateClaudeRequestRejectsSilentlyIgnoredParameters(t *testing.T) {
+func TestValidateClaudeRequestEnforcesRolesAndRanges(t *testing.T) {
 	body := func(model, extra string) string {
 		return `{"model":"` + model + `","max_tokens":1024,"messages":[{"role":"user","content":"hi"}]` + extra + `}`
 	}
@@ -43,12 +45,12 @@ func TestValidateClaudeRequestRejectsSilentlyIgnoredParameters(t *testing.T) {
 		wantErr string
 	}{
 		{"strict model baseline", body("claude-opus-5-5", ""), ""},
-		{"strict model temperature 1.0 kept for compatibility", body("claude-opus-5-5", `,"temperature":1`), ""},
-		{"strict model rejects any other temperature", body("claude-opus-5-5", `,"temperature":0.7`), "temperature: 0.7 is not supported"},
-		{"strict model rejects top_p below 0.99", body("claude-opus-5-5", `,"top_p":0.5`), "top_p: 0.5 is not supported"},
-		{"strict model accepts top_p 0.99", body("claude-opus-5-5", `,"top_p":0.99`), ""},
-		{"strict model rejects top_p above 1", body("claude-opus-5-5", `,"top_p":1.5`), "top_p: 1.5 is not supported"},
-		{"strict model rejects any top_k", body("claude-opus-5-5", `,"top_k":5`), "does not accept top_k"},
+		{"strict model forwards a temperature the converter will clear", body("claude-opus-5-5", `,"temperature":0.7`), ""},
+		{"strict model forwards a top_p the converter will clear", body("claude-opus-5-5", `,"top_p":0.5`), ""},
+		{"strict model forwards a top_k the converter will clear", body("claude-opus-5-5", `,"top_k":5`), ""},
+		{"strict model still range checks temperature", body("claude-opus-5-5", `,"temperature":2`), "temperature: 2 is out of range"},
+		{"strict model still range checks top_p", body("claude-opus-5-5", `,"top_p":1.5`), "top_p: 1.5 is out of range"},
+		{"strict model still range checks top_k", body("claude-opus-5-5", `,"top_k":-1`), "top_k: -1 is out of range"},
 
 		{"legacy model accepts temperature 0", body("claude-sonnet-4", `,"temperature":0`), ""},
 		{"legacy model rejects temperature above 1", body("claude-sonnet-4", `,"temperature":2`), "temperature: 2 is out of range"},

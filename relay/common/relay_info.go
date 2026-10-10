@@ -950,6 +950,7 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 	if info != nil {
 		if info.ChannelMeta != nil {
 			options.ToolLossPolicy = types.ConversionLossPolicy(info.ChannelOtherSettings.ToolLossPolicy)
+			options.Claude.AllowNativeSampling = info.ChannelOtherSettings.AllowClaudeNativeSampling
 		}
 		info.convOptions = options
 	}

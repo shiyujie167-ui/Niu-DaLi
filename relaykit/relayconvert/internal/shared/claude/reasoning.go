@@ -21,6 +21,12 @@ func ApplyReasoning(ctx context.Context, req *dto.ClaudeRequest, info convmeta.M
 	opts := convmeta.OptionsOf(info)
 	baseModel := req.Model
 	capabilityModel := baseModel
+	// Resolve the capability model up front so the native fast path below can
+	// consult it as well: a mapped upstream name may not be a Claude model,
+	// while the client-facing name still is.
+	if info != nil && !reasoning.IsKnownClaudeModel(capabilityModel) && reasoning.IsKnownClaudeModel(info.GetOriginModelName()) {
+		capabilityModel = info.GetOriginModelName()
+	}
 	suffix := reasoning.IntentFromState(convmeta.ReasoningStateOf(info))
 	preserveSuffix := opts.ShouldPreserveThinkingSuffix(req.Model)
 	if info != nil && opts.ShouldPreserveThinkingSuffix(info.GetOriginModelName()) {
@@ -34,7 +40,28 @@ func ApplyReasoning(ctx context.Context, req *dto.ClaudeRequest, info convmeta.M
 	// instead of applying Anthropic model rules. Read portable effort for
 	// accounting metadata, but do not run the capability renderer or rewrite
 	// provider-native controls.
+	//
+	// Sampling controls are the one exception. A provider that dropped them
+	// rejects the request outright: AWS Bedrock answers a native /v1/messages
+	// carrying temperature with "ValidationException: `temperature` is
+	// deprecated for this model", and nothing between this gateway and the
+	// provider can repair it. The cross-protocol paths already clear those
+	// controls for such models (ClaudeRender.ClearSampling), so forwarding
+	// them here would make one model fail through /v1/messages while the same
+	// request succeeds through /v1/chat/completions. Channels fronting a proxy
+	// that implements its own sampling rules opt out with
+	// Options.Claude.AllowNativeSampling.
 	if !crossProtocol && source.IsEmpty() && suffix.IsEmpty() {
+		if !opts.Claude.AllowNativeSampling && reasoning.ClaudeRequiresStrictSampling(capabilityModel) {
+			clearClaudeSampling(ctx, req, types.ConversionDiagnostic{
+				Code:     "claude_sampling_removed",
+				Path:     "temperature/top_p/top_k",
+				Message:  fmt.Sprintf("model %q does not accept sampling controls; they were removed from the native request", capabilityModel),
+				Severity: types.ConversionDiagnosticWarning,
+				From:     types.RelayFormatClaude,
+				To:       types.RelayFormatClaude,
+			})
+		}
 		if info != nil {
 			effort := req.GetEfforts()
 			if effort == "" && req.Thinking != nil {
@@ -62,9 +89,6 @@ func ApplyReasoning(ctx context.Context, req *dto.ClaudeRequest, info convmeta.M
 		return err
 	}
 	convdiag.Add(ctx, diagnostics...)
-	if info != nil && !reasoning.IsKnownClaudeModel(capabilityModel) && reasoning.IsKnownClaudeModel(info.GetOriginModelName()) {
-		capabilityModel = info.GetOriginModelName()
-	}
 	intent, diagnostics, err := reasoning.MergeExplicitAndSuffix(explicit, suffix, req.Model)
 	if err != nil {
 		return err
@@ -138,18 +162,14 @@ func ApplyReasoning(ctx context.Context, req *dto.ClaudeRequest, info convmeta.M
 		req.OutputConfig = encoded
 	}
 	if rendered.ClearSampling {
-		if req.Temperature != nil || req.TopP != nil || req.TopK != nil {
-			convdiag.Add(ctx, types.ConversionDiagnostic{
-				Code:     "claude_sampling_removed",
-				Path:     "temperature/top_p/top_k",
-				Message:  fmt.Sprintf("model %q does not accept sampling controls with the selected thinking mode", capabilityModel),
-				Severity: types.ConversionDiagnosticWarning,
-				To:       types.RelayFormatClaude,
-			})
-		}
-		req.Temperature = nil
-		req.TopP = nil
-		req.TopK = nil
+		clearClaudeSampling(ctx, req, types.ConversionDiagnostic{
+			Code:     "claude_sampling_removed",
+			Path:     "temperature/top_p/top_k",
+			Message:  fmt.Sprintf("model %q does not accept sampling controls with the selected thinking mode", capabilityModel),
+			Severity: types.ConversionDiagnosticWarning,
+			From:     types.RelayFormatClaude,
+			To:       types.RelayFormatClaude,
+		})
 	} else if rendered.ConstrainThinkingSampling {
 		removedSampling := req.Temperature != nil || req.TopK != nil || req.TopP != nil && (*req.TopP < 0.95 || *req.TopP > 1)
 		req.Temperature = nil
@@ -171,4 +191,21 @@ func ApplyReasoning(ctx context.Context, req *dto.ClaudeRequest, info convmeta.M
 		info.SetReasoningEffort(string(rendered.EffectiveEffort))
 	}
 	return nil
+}
+
+// clearClaudeSampling drops temperature / top_p / top_k and records why.
+//
+// A model whose provider no longer accepts sampling controls must not receive
+// them: the provider rejects the whole request, and when the gateway sits
+// behind resale layers the client sees an error raised several hops away that
+// it cannot act on. The diagnostic keeps the removal visible in the request
+// log rather than silently changing what the caller asked for.
+func clearClaudeSampling(ctx context.Context, req *dto.ClaudeRequest, diagnostic types.ConversionDiagnostic) {
+	if req == nil || (req.Temperature == nil && req.TopP == nil && req.TopK == nil) {
+		return
+	}
+	convdiag.Add(ctx, diagnostic)
+	req.Temperature = nil
+	req.TopP = nil
+	req.TopK = nil
 }

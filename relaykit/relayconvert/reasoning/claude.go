@@ -337,10 +337,11 @@ func IsKnownClaudeModel(model string) bool {
 // controls older Claude models accepted. Anthropic only keeps temperature=1.0,
 // top_p>=0.99 and no top_k for these models, and returns 400 for anything else.
 //
-// Request validation uses this to fail such a request at the gateway instead of
-// silently dropping the parameter on the way upstream, which would let a client
-// ship a call that breaks against the real API. Unknown models report false, so
-// an unrecognised alias falls back to the documented 0.0-1.0 ranges.
+// The converter uses this to clear such controls and record a diagnostic
+// rather than forwarding them, which is what every cross-protocol path already
+// does; only values outside the documented ranges are rejected at the gateway,
+// because those are invalid for every model. Unknown models report false, so an
+// unrecognised alias falls back to the documented 0.0-1.0 ranges.
 func ClaudeRequiresStrictSampling(model string) bool {
 	return claudeCapabilitiesFor(model).strictSampling
 }
