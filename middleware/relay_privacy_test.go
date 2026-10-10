@@ -145,21 +145,34 @@ func TestRelayPrivacyKeepsImageAccountingAndBinaryMedia(t *testing.T) {
 
 func TestRelayPrivacyHidesErrorDiagnostics(t *testing.T) {
 	for _, tc := range []struct {
+		name              string
 		status            int
 		contentType, body string
+		wantJSON          string
 	}{
-		{502, "application/json", `{"error":{"message":"Post https://private.invalid: secret","code":"private-provider","metadata":{"key":"secret"}},"debug":"private-worker"}`},
-		{429, "text/html", "<html>private-provider secret</html>"},
-		{200, "text/event-stream", "event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"response_not_found\",\"message\":\"private-provider secret\"}}\n\n"},
-		{200, "application/json", "{broken private-provider secret"},
+		{"json", 502, "application/json", `{"error":{"message":"Post https://private.invalid: secret","code":"private-provider","metadata":{"key":"secret"}},"debug":"private-worker"}`, ""},
+		{"html", 429, "text/html", "<html>private-provider secret</html>", ""},
+		{"sse", 200, "text/event-stream", "event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"response_not_found\",\"message\":\"private-provider secret\"}}\n\n", ""},
+		{"malformed", 200, "application/json", "{broken private-provider secret", ""},
+		{"task-error", 400, "application/json", `{"code":"fail_to_fetch_task","message":"private-provider secret","data":{"debug":"private-worker secret"}}`, `{"error":{"type":"api_error","code":"upstream_error","message":"The model request failed. Contact support with the request ID. (request id: local-request)"}}`},
+		{"standard-error", 400, "application/json", `{"error":{"type":"invalid_request_error","code":"invalid_input","message":"private-provider secret"},"debug":"private-worker"}`, `{"error":{"type":"invalid_request_error","code":"invalid_input","message":"The model request failed. Contact support with the request ID. (request id: local-request)"}}`},
+		{"empty-error", 400, "application/json", `{"error":{},"debug":"private-worker secret"}`, `{"error":{"type":"api_error","code":"upstream_error","message":"The model request failed. Contact support with the request ID. (request id: local-request)"}}`},
+		{"null-error", 400, "application/json", `{"error":null,"message":"private-worker secret"}`, `{"error":{"type":"api_error","code":"upstream_error","message":"The model request failed. Contact support with the request ID. (request id: local-request)"}}`},
+		{"empty-string-error", 400, "application/json", `{"error":"","message":"private-worker secret"}`, `{"error":{"type":"api_error","code":"upstream_error","message":"The model request failed. Contact support with the request ID. (request id: local-request)"}}`},
 	} {
-		t.Run(fmt.Sprint(tc.status)+tc.contentType, func(t *testing.T) {
-			engine := privacyRouter(func(c *gin.Context) { c.Data(tc.status, tc.contentType, []byte(tc.body)) })
+		t.Run(tc.name, func(t *testing.T) {
+			engine := privacyRouter(func(c *gin.Context) {
+				c.Set("channel_id", 38)
+				c.Data(tc.status, tc.contentType, []byte(tc.body))
+			})
 			recorder := httptest.NewRecorder()
 			engine.ServeHTTP(recorder, httptest.NewRequest("POST", "/test", nil))
 			assert.NotContains(t, recorder.Body.String(), "private-")
 			assert.NotContains(t, recorder.Body.String(), "secret")
 			assert.Contains(t, recorder.Body.String(), "local-request")
+			if tc.wantJSON != "" {
+				assert.JSONEq(t, tc.wantJSON, recorder.Body.String())
+			}
 			if tc.contentType == "text/event-stream" {
 				assert.Contains(t, recorder.Body.String(), "response_not_found")
 			} else if tc.status >= 400 {

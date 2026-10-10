@@ -1,0 +1,1313 @@
+diff --git a/web/src/components/layout/model-script-editor.tsx b/web/src/components/layout/model-script-editor.tsx
+index 92e0377..9047701 100644
+--- a/web/src/components/layout/model-script-editor.tsx
++++ b/web/src/components/layout/model-script-editor.tsx
+@@ -55,7 +55,7 @@ export function ModelScriptEditor({ open, capability, modelName, value, onSave,
+             wrapClassName="[&_.ant-modal]:!inset-0 [&_.ant-modal]:!top-0 [&_.ant-modal]:!m-0 [&_.ant-modal]:!max-w-none [&_.ant-modal]:!h-dvh [&_.ant-modal]:!w-full [&_.ant-modal]:!p-0 [&_.ant-modal-container]:!h-dvh [&_.ant-modal-container]:!p-0 [&_.ant-modal-content]:!h-dvh [&_.ant-modal-content]:!max-h-dvh [&_.ant-modal-content]:!rounded-none [&_.ant-modal-content]:!overflow-hidden [&_.ant-modal-body]:!h-full [&_.ant-modal-body]:!max-h-full [&_.ant-modal-body]:!overflow-hidden [&_.ant-modal-body]:!p-0"
+             styles={{
+                 wrapper: { overflow: "hidden" },
+-                content: { height: "100dvh", maxHeight: "100dvh", margin: 0, padding: 0, borderRadius: 0, overflow: "hidden" },
++                container: { height: "100dvh", maxHeight: "100dvh", margin: 0, padding: 0, borderRadius: 0, overflow: "hidden" },
+                 body: { height: "100dvh", maxHeight: "100dvh", padding: 0, overflow: "hidden" },
+             }}
+             style={{ top: 0, margin: 0, paddingBottom: 0, maxWidth: "100vw" }}
+diff --git a/web/src/components/video-settings-panel.tsx b/web/src/components/video-settings-panel.tsx
+index 36563da..81e19ef 100644
+--- a/web/src/components/video-settings-panel.tsx
++++ b/web/src/components/video-settings-panel.tsx
+@@ -6,13 +6,15 @@ import i18n from "@/i18n";
+ import { ImageSettingsTheme } from "@/components/image-settings-panel";
+ import { type CanvasTheme } from "@/lib/canvas-theme";
+ import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
+-import { type AiConfig } from "@/stores/use-config-store";
++import { getNiuVideoCapabilities, videoSettingsError } from "@/lib/video-capabilities";
++import { resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+ 
+ const resolutionOptions = [
+     { value: "480", label: "480p" },
+     { value: "720", label: "720p" },
+     { value: "1080", label: "1080p" },
+ ];
++const gatewayResolutionOptions = [resolutionOptions[0], resolutionOptions[1], { value: "768", label: "768p" }, resolutionOptions[2], { value: "2k", label: "2K" }, { value: "4k", label: "4K" }];
+ const videoModeOptions = [
+     { value: "frames", labelKey: "frames" },
+     { value: "reference", labelKey: "reference" },
+@@ -32,16 +34,32 @@ type VideoSettingsPanelProps = {
+ 
+ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+     const { t } = useTranslation();
++    const model = config.model || config.videoModel;
++    const requestConfig = resolveModelRequestConfig(config, model);
++    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model) : undefined;
++    const settingsError = videoSettingsError(config);
+     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
+     const videoMode = normalizeVideoModeValue(config.videoMode);
+     const resolution = parseVideoResolution(config.vquality);
+     const selectedRatio = inferVideoRatio(config.size || "auto");
+-    const dimensions = readVideoDimensions(config.size || "auto", resolution, selectedRatio);
++    const dimensionSize = capabilities ? computeVideoSize(resolution, selectedRatio) : config.size || "auto";
++    const dimensions = capabilities && resolution.endsWith("k") ? { width: 0, height: 0 } : readVideoDimensions(dimensionSize, resolution, selectedRatio);
+     const applySize = (nextResolution: string, ratio: string) => {
++        if (capabilities) {
++            if (capabilities.ratios.includes(ratio)) onConfigChange("size", ratio);
++            return;
++        }
+         onConfigChange("vquality", nextResolution);
+         onConfigChange("size", computeVideoSize(nextResolution, ratio));
+     };
+     const selectResolution = (nextResolution: string) => {
++        if (capabilities) {
++            if (capabilities.resolutions.includes(nextResolution)) {
++                onConfigChange("vquality", nextResolution);
++                if (capabilities.ratios.includes(selectedRatio) && computeVideoSize(resolution, selectedRatio) === config.size) onConfigChange("size", selectedRatio);
++            }
++            return;
++        }
+         if (selectedRatio === "auto") onConfigChange("vquality", nextResolution);
+         else applySize(nextResolution, selectedRatio);
+     };
+@@ -50,21 +68,22 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle =
+         <ImageSettingsTheme theme={theme}>
+             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
++                {settingsError ? <div role="alert" className="text-sm" style={{ color: theme.node.text }}>{settingsError}</div> : null}
+                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
+                     <div className="grid grid-cols-4 gap-2.5">
+-                        {resolutionOptions.map((item) => (
+-                            <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => selectResolution(item.value)}>
++                        {(capabilities ? gatewayResolutionOptions : resolutionOptions).map((item) => (
++                            <OptionPill key={item.value} selected={resolution === item.value} disabled={Boolean(capabilities && !capabilities.resolutions.includes(item.value))} theme={theme} onClick={() => selectResolution(item.value)}>
+                                 {item.label}
+                             </OptionPill>
+                         ))}
+-                        <ResolutionInput value={resolution} theme={theme} onChange={selectResolution} />
++                        <ResolutionInput value={resolution} disabled={Boolean(capabilities)} label={t("settingsPanels.video.quality")} theme={theme} onChange={selectResolution} />
+                     </div>
+                 </SettingGroup>
+                 <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
+                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+-                        <DimensionInput prefix="W" value={dimensions.width} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
++                        <DimensionInput prefix="W" value={dimensions.width} disabled={Boolean(capabilities) || selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("width", value, dimensions, onConfigChange)} />
+                         <span className="text-lg opacity-45">↔</span>
+-                        <DimensionInput prefix="H" value={dimensions.height} disabled={selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
++                        <DimensionInput prefix="H" value={dimensions.height} disabled={Boolean(capabilities) || selectedRatio === "auto"} theme={theme} onChange={(value) => updateDimension("height", value, dimensions, onConfigChange)} />
+                     </div>
+                 </SettingGroup>
+                 <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
+@@ -73,7 +92,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle =
+                             <button
+                                 key={item.value}
+                                 type="button"
+-                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
++                                disabled={Boolean(capabilities && !capabilities.ratios.includes(item.value))}
++                                aria-pressed={selectedRatio === item.value}
++                                className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35"
+                                 style={{ borderColor: selectedRatio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                                 onMouseDown={(event) => event.stopPropagation()}
+                                 onClick={() => applySize(resolution, item.value)}
+@@ -106,7 +127,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle =
+ }
+ 
+ export function videoResolutionLabel(value: string) {
+-    return `${parseVideoResolution(value)}p`;
++    const resolution = parseVideoResolution(value);
++    return resolution.endsWith("k") ? resolution.toUpperCase() : `${resolution}p`;
+ }
+ 
+ export function videoSizeLabel(value: string) {
+@@ -145,7 +167,7 @@ function updateDimension(key: "width" | "height", value: number | null, dimensio
+ 
+ function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+     return (
+-        <button type="button" disabled={disabled} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
++        <button type="button" disabled={disabled} aria-pressed={selected} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+             {children}
+         </button>
+     );
+@@ -162,10 +184,10 @@ function SettingGroup({ title, color, children }: { title: string; color: string
+     );
+ }
+ 
+-function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
++function ResolutionInput({ value, disabled, label, theme, onChange }: { value: string; disabled: boolean; label: string; theme: CanvasTheme; onChange: (value: string) => void }) {
+     return (
+-        <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
+-            <input type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
++        <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text, opacity: disabled ? 0.55 : 1 }}>
++            <input type="number" min={1} disabled={disabled} aria-label={label} placeholder="—" className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value.endsWith("k") ? "" : value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
+                 p
+             </span>
+@@ -205,7 +227,7 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix:
+             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
+                 {prefix}
+             </span>
+-            <input type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
++            <input type="number" min={1} disabled={disabled} aria-label={prefix} placeholder="—" className="min-w-0 flex-1 bg-transparent px-2 outline-none disabled:cursor-not-allowed [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
+         </label>
+     );
+ }
+diff --git a/web/src/i18n/locales/en-US.ts b/web/src/i18n/locales/en-US.ts
+index 3bc1f5e..ed209fa 100644
+--- a/web/src/i18n/locales/en-US.ts
++++ b/web/src/i18n/locales/en-US.ts
+@@ -55,7 +55,7 @@ export default {
+             anyModel: "(the currently selected model)",
+         },
+     },
+-    apiErrors: { requestFailed: "Request failed", requestCanceled: "Request canceled", baseUrlRequired: "Configure the Base URL first", apiKeyRequired: "Configure the API key first", authenticationFailed: "Authentication failed. Check the API key, plan permissions, and model permissions.", rateLimited: "The request was rate-limited or the quota is insufficient. Try again later.", notFound: "The endpoint was not found (404). Check the Base URL and selected model.", badGateway: "Gateway error (502). The API service is temporarily unavailable.", serviceBusy: "Service unavailable (503). Try again later.", httpFailed: "Request failed (HTTP {{status}}). Check the Base URL and API key.", htmlError: "The service returned an HTML error page ({{preview}})", imageTimeout: "The image request timed out. The endpoint did not respond in time; retry later or switch channels.", audioModelRequired: "Configure an audio model first", audioGenerationFailed: "Audio generation failed", scriptNoAudio: "The model request script did not return audio", geminiAudioUnsupported: "The Gemini API format does not support audio generation. Use an OpenAI-format provider.", invalidImageSizeFormat: "Unsupported image size. Use auto, 9:16, or 1024x1024.", positiveImageRatio: "The image ratio must use positive numbers, such as 9:16.", imageRatioLimit: "The image aspect ratio cannot exceed 3:1. Adjust the dimensions.", positiveImageDimensions: "Image dimensions must be positive integers, such as 1024x1024.", imageDimensionStep: "Image width and height must be multiples of 16.", imageEdgeLimit: "The longest image edge cannot exceed 3840px.", imagePixelLimit: "The total image pixel count must be between 655360 and 8294400.", unknownImageResponse: "The API returned data in an unknown format (fields: {{fields}}). Check model or API compatibility.", noImageReturned: "The API did not return an image. The prompt may have triggered safety review or the model may not support this operation.", geminiRejected: "Gemini rejected the request: {{reason}}", geminiNoImage: "The Gemini API did not return an image", maskModelUnsupported: "This model does not support mask editing. Use another provider.", noContent: "No content returned", modelReadFailed: "Failed to load models", videoTimeout: "{{provider}}video generation timed out. Try again later.", pluginVideoExpired: "The plugin video task has expired. Generate it again.", scriptNoVideo: "The model request script did not return a video", noPlayableVideo: "The video API did not return a playable video", noVideoTaskId: "The video API did not return a task ID", videoTaskCreateFailed: "Failed to create video task", videoGenerationFailed: "Video generation failed", videoTaskQueryFailed: "Failed to query video task", videoPromptRequired: "Enter a video prompt or connect a reference image, video, or audio asset", referenceImageReadFailed: "Failed to read the reference image. Choose another image or upload it again.", invalidReferenceVideo: "A reference video must be a public URL, asset ID, or locally saved video", invalidReferenceAudio: "Reference audio must be a public URL, asset ID, or locally saved audio file", videoModelRequired: "Configure a video model first", geminiVideoUnsupported: "The Gemini API format does not support video generation. Use an OpenAI-format provider.", noVideoTask: "The API did not return a video task", videoDownloadFailed: "Failed to download video", localAssetReadFailed: "Failed to read local asset" },
++    apiErrors: { unsupportedVideoSettings: "{{model}} does not support the current resolution or size. Choose a resolution: {{resolutions}}; aspect ratio: {{ratios}}.", requestFailed: "Request failed", requestCanceled: "Request canceled", baseUrlRequired: "Configure the Base URL first", apiKeyRequired: "Configure the API key first", authenticationFailed: "Authentication failed. Check the API key, plan permissions, and model permissions.", rateLimited: "The request was rate-limited or the quota is insufficient. Try again later.", notFound: "The endpoint was not found (404). Check the Base URL and selected model.", badGateway: "Gateway error (502). The API service is temporarily unavailable.", serviceBusy: "Service unavailable (503). Try again later.", httpFailed: "Request failed (HTTP {{status}}). Check the Base URL and API key.", htmlError: "The service returned an HTML error page ({{preview}})", imageTimeout: "The image request timed out. The endpoint did not respond in time; retry later or switch channels.", audioModelRequired: "Configure an audio model first", audioGenerationFailed: "Audio generation failed", scriptNoAudio: "The model request script did not return audio", geminiAudioUnsupported: "The Gemini API format does not support audio generation. Use an OpenAI-format provider.", invalidImageSizeFormat: "Unsupported image size. Use auto, 9:16, or 1024x1024.", positiveImageRatio: "The image ratio must use positive numbers, such as 9:16.", imageRatioLimit: "The image aspect ratio cannot exceed 3:1. Adjust the dimensions.", positiveImageDimensions: "Image dimensions must be positive integers, such as 1024x1024.", imageDimensionStep: "Image width and height must be multiples of 16.", imageEdgeLimit: "The longest image edge cannot exceed 3840px.", imagePixelLimit: "The total image pixel count must be between 655360 and 8294400.", unknownImageResponse: "The API returned data in an unknown format (fields: {{fields}}). Check model or API compatibility.", noImageReturned: "The API did not return an image. The prompt may have triggered safety review or the model may not support this operation.", geminiRejected: "Gemini rejected the request: {{reason}}", geminiNoImage: "The Gemini API did not return an image", maskModelUnsupported: "This model does not support mask editing. Use another provider.", noContent: "No content returned", modelReadFailed: "Failed to load models", videoTimeout: "{{provider}}video generation timed out. Try again later.", pluginVideoExpired: "The plugin video task has expired. Generate it again.", scriptNoVideo: "The model request script did not return a video", noPlayableVideo: "The video API did not return a playable video", noVideoTaskId: "The video API did not return a task ID", videoTaskCreateFailed: "Failed to create video task", videoGenerationFailed: "Video generation failed", videoTaskQueryFailed: "Failed to query video task", videoPromptRequired: "Enter a video prompt or connect a reference image, video, or audio asset", referenceImageReadFailed: "Failed to read the reference image. Choose another image or upload it again.", invalidReferenceVideo: "A reference video must be a public URL, asset ID, or locally saved video", invalidReferenceAudio: "Reference audio must be a public URL, asset ID, or locally saved audio file", videoModelRequired: "Configure a video model first", geminiVideoUnsupported: "The Gemini API format does not support video generation. Use an OpenAI-format provider.", noVideoTask: "The API did not return a video task", videoDownloadFailed: "Failed to download video", localAssetReadFailed: "Failed to read local asset" },
+     prompts: {
+         title: "Prompt Center",
+         library: "Prompt Library",
+diff --git a/web/src/i18n/locales/zh-CN.ts b/web/src/i18n/locales/zh-CN.ts
+index 39ed010..456360b 100644
+--- a/web/src/i18n/locales/zh-CN.ts
++++ b/web/src/i18n/locales/zh-CN.ts
+@@ -55,7 +55,7 @@ export default {
+             anyModel: "（当前选中的模型）",
+         },
+     },
+-    apiErrors: { requestFailed: "请求失败", requestCanceled: "请求已取消", baseUrlRequired: "请先配置 Base URL", apiKeyRequired: "请先配置 API Key", authenticationFailed: "鉴权失败，请检查 API Key、套餐权限或模型权限", rateLimited: "请求被限流或额度不足，请稍后重试", notFound: "接口地址不存在（404），请检查 Base URL 和模型选择", badGateway: "网关错误（502），接口服务暂时不可用，请稍后重试", serviceBusy: "服务繁忙（503），请稍后重试", httpFailed: "请求失败（HTTP {{status}}），请检查 Base URL 和 API Key 是否正确", htmlError: "服务返回了 HTML 错误页面（{{preview}}）", imageTimeout: "生图请求超时，接口长时间没有返回，请稍后重试或更换渠道", audioModelRequired: "请先配置音频模型", audioGenerationFailed: "音频生成失败", scriptNoAudio: "模型调用脚本没有返回音频", geminiAudioUnsupported: "Gemini 调用格式暂不支持音频生成，请使用 OpenAI 格式渠道", invalidImageSizeFormat: "图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024", positiveImageRatio: "图像比例必须是正数，例如 9:16", imageRatioLimit: "图像宽高比不能超过 3:1，请调整尺寸", positiveImageDimensions: "图像尺寸必须是正整数，例如 1024x1024", imageDimensionStep: "图像尺寸的宽高必须是 16 的倍数，请调整尺寸", imageEdgeLimit: "图像尺寸最长边不能超过 3840px，请调整尺寸", imagePixelLimit: "图像总像素需在 655360 到 8294400 之间，请调整尺寸", unknownImageResponse: "接口返回了未知格式的数据（字段：{{fields}}），请检查模型或接口兼容性", noImageReturned: "接口没有返回图片，请检查提示词是否触发安全审核或模型是否支持该操作", geminiRejected: "Gemini 拒绝了本次请求：{{reason}}", geminiNoImage: "Gemini 接口没有返回图片", maskModelUnsupported: "蒙版编辑暂不支持该模型，请使用其他渠道", noContent: "没有返回内容", modelReadFailed: "读取模型失败", videoTimeout: "{{provider}}视频生成超时，请稍后重试", pluginVideoExpired: "插件视频任务已失效，请重新生成", scriptNoVideo: "模型调用脚本没有返回视频", noPlayableVideo: "视频接口没有返回可播放的视频", noVideoTaskId: "视频接口没有返回任务 ID", videoTaskCreateFailed: "视频任务创建失败", videoGenerationFailed: "视频生成失败", videoTaskQueryFailed: "视频任务查询失败", videoPromptRequired: "请输入视频提示词，或连接参考图片/视频/音频", referenceImageReadFailed: "参考图读取失败，请换一张图片或重新上传", invalidReferenceVideo: "参考视频必须是公网 URL、资产 ID，或本地已保存的视频", invalidReferenceAudio: "参考音频必须是公网 URL、资产 ID，或本地已保存的音频", videoModelRequired: "请先配置视频模型", geminiVideoUnsupported: "Gemini 调用格式暂不支持视频生成，请使用 OpenAI 格式渠道", noVideoTask: "接口没有返回视频任务", videoDownloadFailed: "视频下载失败", localAssetReadFailed: "读取本地资产失败" },
++    apiErrors: { unsupportedVideoSettings: "{{model}} 不支持当前清晰度或尺寸。请选择清晰度：{{resolutions}}；比例：{{ratios}}。", requestFailed: "请求失败", requestCanceled: "请求已取消", baseUrlRequired: "请先配置 Base URL", apiKeyRequired: "请先配置 API Key", authenticationFailed: "鉴权失败，请检查 API Key、套餐权限或模型权限", rateLimited: "请求被限流或额度不足，请稍后重试", notFound: "接口地址不存在（404），请检查 Base URL 和模型选择", badGateway: "网关错误（502），接口服务暂时不可用，请稍后重试", serviceBusy: "服务繁忙（503），请稍后重试", httpFailed: "请求失败（HTTP {{status}}），请检查 Base URL 和 API Key 是否正确", htmlError: "服务返回了 HTML 错误页面（{{preview}}）", imageTimeout: "生图请求超时，接口长时间没有返回，请稍后重试或更换渠道", audioModelRequired: "请先配置音频模型", audioGenerationFailed: "音频生成失败", scriptNoAudio: "模型调用脚本没有返回音频", geminiAudioUnsupported: "Gemini 调用格式暂不支持音频生成，请使用 OpenAI 格式渠道", invalidImageSizeFormat: "图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024", positiveImageRatio: "图像比例必须是正数，例如 9:16", imageRatioLimit: "图像宽高比不能超过 3:1，请调整尺寸", positiveImageDimensions: "图像尺寸必须是正整数，例如 1024x1024", imageDimensionStep: "图像尺寸的宽高必须是 16 的倍数，请调整尺寸", imageEdgeLimit: "图像尺寸最长边不能超过 3840px，请调整尺寸", imagePixelLimit: "图像总像素需在 655360 到 8294400 之间，请调整尺寸", unknownImageResponse: "接口返回了未知格式的数据（字段：{{fields}}），请检查模型或接口兼容性", noImageReturned: "接口没有返回图片，请检查提示词是否触发安全审核或模型是否支持该操作", geminiRejected: "Gemini 拒绝了本次请求：{{reason}}", geminiNoImage: "Gemini 接口没有返回图片", maskModelUnsupported: "蒙版编辑暂不支持该模型，请使用其他渠道", noContent: "没有返回内容", modelReadFailed: "读取模型失败", videoTimeout: "{{provider}}视频生成超时，请稍后重试", pluginVideoExpired: "插件视频任务已失效，请重新生成", scriptNoVideo: "模型调用脚本没有返回视频", noPlayableVideo: "视频接口没有返回可播放的视频", noVideoTaskId: "视频接口没有返回任务 ID", videoTaskCreateFailed: "视频任务创建失败", videoGenerationFailed: "视频生成失败", videoTaskQueryFailed: "视频任务查询失败", videoPromptRequired: "请输入视频提示词，或连接参考图片/视频/音频", referenceImageReadFailed: "参考图读取失败，请换一张图片或重新上传", invalidReferenceVideo: "参考视频必须是公网 URL、资产 ID，或本地已保存的视频", invalidReferenceAudio: "参考音频必须是公网 URL、资产 ID，或本地已保存的音频", videoModelRequired: "请先配置视频模型", geminiVideoUnsupported: "Gemini 调用格式暂不支持视频生成，请使用 OpenAI 格式渠道", noVideoTask: "接口没有返回视频任务", videoDownloadFailed: "视频下载失败", localAssetReadFailed: "读取本地资产失败" },
+     prompts: {
+         title: "提示词中心",
+         library: "提示词库",
+diff --git a/web/src/lib/media-size.ts b/web/src/lib/media-size.ts
+index 1986fc2..670d415 100644
+--- a/web/src/lib/media-size.ts
++++ b/web/src/lib/media-size.ts
+@@ -106,6 +106,7 @@ export function clampVideoSeconds(value: string) {
+ 
+ export function parseVideoResolution(value: string | undefined) {
+     const raw = String(value || "").trim().toLowerCase();
++    if (raw === "2k" || raw === "4k") return raw;
+     if (raw === "low") return "480";
+     if (raw === "auto" || raw === "high" || raw === "medium") return "720";
+     const number = raw.replace(/p$/i, "");
+@@ -130,6 +131,8 @@ export function inferVideoRatio(size: string) {
+ 
+ export function computeVideoSize(resolution: string, ratio: string) {
+     if (ratio === "auto" || !ratio) return "auto";
++    // Model-specific K tiers do not define an exact output pixel size.
++    if (parseVideoResolution(resolution).endsWith("k")) return "auto";
+     const parsed = parseAspectRatio(ratio);
+     if (!parsed) return "auto";
+     const p = Math.max(1, Math.floor(Number(parseVideoResolution(resolution)) || 720));
+diff --git a/web/src/pages/image/index.tsx b/web/src/pages/image/index.tsx
+index e011216..962c3fc 100644
+--- a/web/src/pages/image/index.tsx
++++ b/web/src/pages/image/index.tsx
+@@ -11,7 +11,7 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+ import { canvasThemes } from "@/lib/canvas-theme";
+ import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
++import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+ import { useThemeStore } from "@/stores/use-theme-store";
+ import { nanoid } from "nanoid";
+ import { formatBytes, formatDuration } from "@/lib/image-utils";
+@@ -800,7 +800,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
+     return {
+         id: log.id || nanoid(),
+         createdAt: log.createdAt || Date.now(),
+-        title: log.title || log.model || i18n.t("workbench.untitled"),
++        title: log.title || modelOptionName(log.model || "") || i18n.t("workbench.untitled"),
+         prompt: log.prompt || log.title || "",
+         time: log.time || new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
+         model: log.model || config.imageModel || "",
+diff --git a/web/src/pages/video/index.tsx b/web/src/pages/video/index.tsx
+index 39c87dc..efab30d 100644
+--- a/web/src/pages/video/index.tsx
++++ b/web/src/pages/video/index.tsx
+@@ -9,16 +9,17 @@ import { useTranslation } from "react-i18next";
+ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
+ import { ModelPicker } from "@/components/model-picker";
+ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
+-import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoSizeLabel } from "@/components/video-settings-panel";
++import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoModeLabel, videoResolutionLabel, videoSizeLabel } from "@/components/video-settings-panel";
+ import { canvasThemes } from "@/lib/canvas-theme";
+ import { clampVideoSeconds } from "@/lib/media-size";
++import { getNiuVideoCapabilities } from "@/lib/video-capabilities";
+ import { formatBytes, formatDuration } from "@/lib/image-utils";
+ import { deleteStoredMedia, resolveMediaUrl } from "@/services/file-storage";
+ import { resolveImageUrl, ensureImagePreview, getImagePreviewRevision, previewUrlFor, subscribeImagePreviews, uploadImage } from "@/services/image-storage";
+ import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+ import { useAssetStore } from "@/stores/use-asset-store";
+ import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
+-import { boolConfig, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
++import { boolConfig, modelOptionLabel, modelOptionName, resolveModelRequestConfig, resolveModelScript, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+ import { useThemeStore } from "@/stores/use-theme-store";
+ import type { ReferenceImage } from "@/types/image";
+ import i18n from "@/i18n";
+@@ -444,7 +445,7 @@ export default function VideoPage() {
+ 
+                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
+                                 <span className="truncate text-stone-500 dark:text-stone-400">
+-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
++                                    {modelOptionLabel(effectiveConfig, model)} · {videoResolutionLabel(effectiveConfig.vquality)} · {videoSizeLabel(effectiveConfig.size)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s · {videoModeLabel(effectiveConfig.videoMode)}
+                                 </span>
+                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
+                                     {t("workbench.adjust")}
+@@ -520,7 +521,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
+                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+             </label>
+             <div className="col-span-2">
+-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
++                <VideoSettingsPanel config={{ ...config, model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+             </div>
+         </>
+     );
+@@ -641,7 +642,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
+                     <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
+                     <div className="mt-2 flex flex-wrap gap-1">
+                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
+-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
++                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{videoResolutionLabel(log.resolution)}</Tag>
+                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.seconds}s</Tag>
+                     </div>
+                 </div>
+@@ -683,7 +684,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
+     return {
+         id: log.id || nanoid(),
+         createdAt: log.createdAt || Date.now(),
+-        title: log.title || log.model || i18n.t("workbench.untitled"),
++        title: log.title || modelOptionName(log.model || "") || i18n.t("workbench.untitled"),
+         prompt: log.prompt || "",
+         time: log.time || new Date().toLocaleString(i18n.resolvedLanguage, { hour12: false }),
+         model: log.model || config.videoModel || "",
+@@ -771,11 +772,13 @@ function buildLog({ prompt, model, config, references, durationMs, status, task,
+ }
+ 
+ function buildVideoConfig(config: AiConfig, model: string): AiConfig {
++    const requestConfig = resolveModelRequestConfig(config, model);
++    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model) : undefined;
+     return {
+         ...config,
+         model,
+         videoModel: model,
+-        size: normalizeVideoSize(config.size),
++        size: capabilities ? config.size : normalizeVideoSize(config.size),
+         videoSeconds: normalizeVideoSeconds(config.videoSeconds),
+         vquality: normalizeResolution(config.vquality),
+         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
+diff --git a/web/src/services/api/video.ts b/web/src/services/api/video.ts
+index 20bea38..5762441 100644
+--- a/web/src/services/api/video.ts
++++ b/web/src/services/api/video.ts
+@@ -3,7 +3,8 @@ import { nanoid } from "nanoid";
+ 
+ import i18n from "@/i18n";
+ import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
+-import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
++import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
++import { getNiuVideoCapabilities, videoSettingsError } from "@/lib/video-capabilities";
+ import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+ import { imageToDataUrl } from "@/services/image-storage";
+ import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+@@ -43,6 +44,10 @@ function aiHeaders(config: AiConfig, contentType?: string) {
+     };
+ }
+ 
++function isNiuVideoRequest(config: AiConfig, model: string) {
++    return Boolean(getNiuVideoCapabilities(config.baseUrl, model));
++}
++
+ export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationResult> {
+     return waitForVideoGenerationTask(config, await createVideoGenerationTask(config, prompt, references, options), options);
+ }
+@@ -75,6 +80,8 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
+     const script = resolveModelScript(config, selectedModel);
+     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
+     assertVideoConfig(requestConfig, requestConfig.model);
++    const settingsError = videoSettingsError({ ...config, model: selectedModel });
++    if (settingsError) throw new Error(settingsError);
+     if (requestConfig.apiFormat === "gemini") return createGeminiVideoTask(requestConfig, selectedModel, prompt, references, options);
+     return createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options);
+ }
+@@ -155,16 +162,26 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
+     body.append("model", modelOptionName(model));
+     body.append("prompt", prompt);
+     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
+-    body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
+-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
+-    body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
+-    body.append("watermark", String(boolConfig(config.videoWatermark, false)));
+-    body.append("mode", mode);
+-    if (mode === "frames") {
+-        if (images[0]) body.append("first_frame", images[0], "first.png");
+-        if (images[1]) body.append("last_frame", images[1], "last.png");
++    if (isNiuVideoRequest(config, model)) {
++        // The deployed gateway accepts canonical plugin fields. Its video API
++        // supports reference images, without separate frame or watermark controls.
++        body.append("aspect_ratio", videoAspectRatio(config.size));
++        const resolution = parseVideoResolution(config.vquality);
++        body.append("resolution", resolution.endsWith("k") ? resolution : `${resolution}p`);
++        body.append("with_audio", String(boolConfig(config.videoGenerateAudio, true)));
++        images.forEach((file) => body.append("reference_images", file, file.name));
+     } else {
+-        images.forEach((file) => body.append("image[]", file, "ref.png"));
++        body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
++        body.append("resolution_name", normalizeVideoResolution(config.vquality));
++        body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
++        body.append("watermark", String(boolConfig(config.videoWatermark, false)));
++        body.append("mode", mode);
++        if (mode === "frames") {
++            if (images[0]) body.append("first_frame", images[0], "first.png");
++            if (images[1]) body.append("last_frame", images[1], "last.png");
++        } else {
++            images.forEach((file) => body.append("image[]", file, "ref.png"));
++        }
+     }
+     videos.forEach((file) => body.append("video[]", file));
+     audios.forEach((file) => body.append("audio[]", file));
+@@ -180,6 +197,21 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
+ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+     try {
+         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
++        if (video.status === "failed" || video.status === "cancelled") {
++            let message = readApiErrorMessage(video.error?.message).trim();
++            if (!message && isNiuVideoRequest(config, task.model)) {
++                try {
++                    // The deployed OpenAI renderer omits failure details; the
++                    // native task query exposes them without creating a task.
++                    const url = withLocalProxy(`${new URL(config.baseUrl).origin}/mengwuxian/api/v1/video-tasks/${encodeURIComponent(task.id)}`);
++                    const response = await axios.get<{ error_message?: unknown }>(url, { headers: aiHeaders(config), signal: options?.signal });
++                    message = readApiErrorMessage(response.data?.error_message).trim();
++                } catch (error) {
++                    if (axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError") || options?.signal?.aborted) throw error;
++                }
++            }
++            return { status: "failed", error: message || apiText("videoGenerationFailed") };
++        }
+         const url = videoResultUrl(video);
+         if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
+         if (video.status === "completed") {
+@@ -187,9 +219,9 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask,
+             await assertVideoBlob(content.data);
+             return { status: "completed", result: { blob: content.data } };
+         }
+-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
+         return { status: "pending" };
+     } catch (error) {
++        if (axios.isCancel(error) || (error instanceof DOMException && error.name === "AbortError") || options?.signal?.aborted) throw error;
+         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
+     }
+ }
+@@ -323,6 +355,7 @@ function normalizeVideoSize(value: string, resolution?: string) {
+ }
+ 
+ function normalizeVideoResolution(value: string) {
++    if (/^[24]k$/i.test(value)) return value.toLowerCase();
+     if (value === "low") return "480p";
+     if (value === "auto" || value === "high" || value === "medium") return "720p";
+     const resolution = value.replace(/p$/i, "") || "720";
+diff --git a/web/src/services/config-file.ts b/web/src/services/config-file.ts
+index b551012..703eeaf 100644
+--- a/web/src/services/config-file.ts
++++ b/web/src/services/config-file.ts
+@@ -1,7 +1,7 @@
+ import { saveAs } from "file-saver";
+ 
+ import i18n from "@/i18n";
+-import { useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
++import { normalizeChannelNames, useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
+ import { usePromptSourceStore, type PromptSourceSchedule } from "@/stores/use-prompt-source-store";
+ import type { PromptSource } from "@/services/api/prompt-source-presets";
+ 
+@@ -32,6 +32,6 @@ export async function importAppConfig(file: File) {
+         throw new Error(i18n.t("config.invalidFile"));
+     }
+     if (data.app !== "infinite-canvas" || data.version !== 1 || !data.config || !data.webdav || !data.promptSources) throw new Error(i18n.t("config.invalidFile"));
+-    useConfigStore.setState({ config: data.config, webdav: data.webdav });
++    useConfigStore.setState({ config: { ...data.config, channels: normalizeChannelNames(data.config.channels) }, webdav: data.webdav });
+     usePromptSourceStore.setState(data.promptSources);
+ }
+diff --git a/web/src/stores/use-config-store.ts b/web/src/stores/use-config-store.ts
+index c0a0c85..2b495bb 100644
+--- a/web/src/stores/use-config-store.ts
++++ b/web/src/stores/use-config-store.ts
+@@ -72,7 +72,7 @@ export type ChannelCredentialsImportResult = {
+ 
+ export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
+ const CHANNEL_MODEL_SEPARATOR = "::";
+-const OPENAI_BASE_URL = "https://api.openai.com";
++const OPENAI_BASE_URL = "https://8.216.57.93";
+ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+ export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
+ export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
+@@ -90,32 +90,32 @@ export const defaultConfig: AiConfig = {
+             apiKey: "",
+             apiFormat: "openai",
+             models: [
+-                { name: "gpt-image-2", capability: "image" },
+-                { name: "grok-imagine-video", capability: "video" },
+-                { name: "gpt-5.5", capability: "text" },
+-                { name: "gpt-4o-mini-tts", capability: "audio" },
++                { name: "Sd-2.0fast", capability: "video" },
++                { name: "Sd-2.0满血933", capability: "video" },
++                { name: "Sd-2.5", capability: "video" },
++                { name: "minmax-h3", capability: "video" },
+             ],
+         },
+     ],
+-    model: "default::gpt-image-2",
+-    imageModel: "default::gpt-image-2",
+-    videoModel: "default::grok-imagine-video",
+-    textModel: "default::gpt-5.5",
+-    audioModel: "default::gpt-4o-mini-tts",
++    model: "",
++    imageModel: "",
++    videoModel: "default::Sd-2.0fast",
++    textModel: "",
++    audioModel: "",
+     audioVoice: "alloy",
+     audioFormat: "mp3",
+     audioSpeed: "1",
+     audioInstructions: "",
+-    videoSeconds: "6",
++    videoSeconds: "4",
+     vquality: "720",
+     videoGenerateAudio: "true",
+     videoWatermark: "false",
+-    videoMode: "frames",
++    videoMode: "reference",
+     systemPrompt: "",
+     reasoningEffort: "auto",
+-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
++    models: ["default::Sd-2.0fast", "default::Sd-2.0满血933", "default::Sd-2.5", "default::minmax-h3"],
+     quality: "auto",
+-    size: "1:1",
++    size: "16:9",
+     background: "",
+     count: "1",
+     canvasImageCount: "3",
+@@ -216,6 +216,7 @@ export const useConfigStore = create<ConfigStore>()(
+                     config: {
+                         ...state.config,
+                         [key]: value,
++                        channels: key === "channels" ? normalizeChannelNames(value as ModelChannel[]) : state.config.channels,
+                     },
+                 })),
+             importChannelCredentials: (input) => {
+@@ -244,7 +245,7 @@ export const useConfigStore = create<ConfigStore>()(
+                 const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
+                 const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
+                 const config = { ...defaultConfig, ...persistedConfig };
+-                if (!Array.isArray(persistedConfig.channels)) config.channels = [];
++                if (persistedState.config && !Array.isArray(persistedConfig.channels)) config.channels = [];
+                 const channels = normalizeChannels(config);
+                 const models = modelOptionsFromChannels(channels);
+                 return {
+@@ -304,7 +305,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
+     const apiFormat = normalizeApiFormat(channel?.apiFormat);
+     return {
+         id: channel?.id?.trim() || nanoid(),
+-        name: channel?.name?.trim() || i18n.t("config.channels.newName"),
++        name: normalizeChannelName(channel?.name, i18n.t("config.channels.newName")),
+         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
+         apiKey: channel?.apiKey || "",
+         apiFormat,
+@@ -312,6 +313,20 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
+     };
+ }
+ 
++function normalizeChannelName(value: string | undefined, fallback: string) {
++    const name = value?.trim() || "";
++    const clean = name.replace(/[（(]\s*zhi168\s*[）)]/gi, "").replace(/(^|[\s·•|/,:：，;；_\-–—]+)zhi168(?=$|[\s·•|/,:：，;；_\-–—])/gi, "");
++    return (clean === name ? name : clean.replace(/^[\s·•|/,:：，;；_\-–—]+|[\s·•|/,:：，;；_\-–—]+$/g, "")) || fallback;
++}
++
++export function normalizeChannelNames(channels: ModelChannel[]) {
++    const normalized = channels.map((channel, index) => {
++        const name = normalizeChannelName(channel.name, index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 }));
++        return name === channel.name ? channel : { ...channel, name };
++    });
++    return normalized.some((channel, index) => channel !== channels[index]) ? normalized : channels;
++}
++
+ export function upsertChannelCredentials(
+     config: AiConfig,
+     input: { baseUrl?: string | null; apiKey?: string | null },
+@@ -320,6 +335,8 @@ export function upsertChannelCredentials(
+     if (!rawBaseUrl) return { status: "missing-base-url", config };
+     if (!isHttpBaseUrl(rawBaseUrl)) return { status: "invalid-base-url", config };
+ 
++    const namedChannels = normalizeChannelNames(config.channels);
++    if (namedChannels !== config.channels) config = { ...config, channels: namedChannels };
+     const baseUrl = normalizeImportedBaseUrl(rawBaseUrl);
+     const apiKey = input.apiKey?.trim() || "";
+     const matchingIndex = config.channels.findIndex((channel) => normalizedBaseUrlKey(channel.baseUrl) === normalizedBaseUrlKey(baseUrl));
+@@ -398,7 +415,7 @@ export function modelOptionLabel(config: AiConfig, value: string) {
+     const decoded = decodeChannelModel(value);
+     if (!decoded) return value;
+     const channel = config.channels.find((item) => item.id === decoded.channelId);
+-    return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
++    return channel ? `${decoded.model}（${normalizeChannelName(channel.name, i18n.t("config.channels.defaultName"))}）` : decoded.model;
+ }
+ 
+ export function modelOptionsFromChannels(channels: ModelChannel[]) {
+@@ -441,7 +458,7 @@ function normalizeChannels(config: AiConfig) {
+         createModelChannel({
+             ...channel,
+             id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
+-            name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
++            name: normalizeChannelName(channel.name, index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
+             models: normalizeChannelModels(channel.models),
+         }),
+     );
+diff --git a/web/src/lib/video-capabilities.ts b/web/src/lib/video-capabilities.ts
+new file mode 100644
+index 0000000..009020f
+--- /dev/null
++++ b/web/src/lib/video-capabilities.ts
+@@ -0,0 +1,40 @@
++import i18n from "@/i18n";
++import { computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
++import { modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
++
++const wideRatios = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
++// Keep in sync with the gateway's mengwuxian task plugin model contract.
++const gatewayModels: Record<string, { resolutions: readonly string[]; ratios: readonly string[] }> = {
++    "Sd-2.0fast": { resolutions: ["720", "1080"], ratios: wideRatios },
++    "Sd-2.0满血933": { resolutions: ["720", "1080", "4k"], ratios: wideRatios },
++    "Sd-2.5": { resolutions: ["480", "720", "1080"], ratios: wideRatios },
++    "minmax-h3": { resolutions: ["768", "2k"], ratios: ["16:9", "9:16", "1:1"] },
++};
++
++export function getNiuVideoCapabilities(baseUrl: string, model: string) {
++    try {
++        if (new URL(baseUrl).origin !== "https://8.216.57.93") return undefined;
++    } catch {
++        return undefined;
++    }
++    const name = modelOptionName(model);
++    return Object.hasOwn(gatewayModels, name) ? gatewayModels[name] : undefined;
++}
++
++export function videoSettingsError(config: AiConfig): string {
++    const model = config.model || config.videoModel;
++    if (resolveModelScript(config, model)) return "";
++    const request = resolveModelRequestConfig(config, model);
++    const capabilities = request.apiFormat === "openai" ? getNiuVideoCapabilities(request.baseUrl, model) : undefined;
++    if (!capabilities) return "";
++    const rawResolution = config.vquality.trim().toLowerCase();
++    const resolution = parseVideoResolution(config.vquality);
++    const ratio = inferVideoRatio(config.size);
++    const supportedSize = capabilities.ratios.includes(config.size) || (capabilities.ratios.includes(ratio) && !resolution.endsWith("k") && computeVideoSize(resolution, ratio) === config.size);
++    if (/^(?:[1-9]\d*p?|[24]k|low|auto|high|medium)$/.test(rawResolution) && capabilities.resolutions.includes(resolution) && supportedSize) return "";
++    return i18n.t("apiErrors.unsupportedVideoSettings", {
++        model: modelOptionName(model),
++        resolutions: capabilities.resolutions.map((value) => value.endsWith("k") ? value.toUpperCase() : `${value}p`).join(" / "),
++        ratios: capabilities.ratios.join(" / "),
++    });
++}
+diff --git a/web/tests/gateway-defaults.test.ts b/web/tests/gateway-defaults.test.ts
+new file mode 100644
+index 0000000..7820d43
+--- /dev/null
++++ b/web/tests/gateway-defaults.test.ts
+@@ -0,0 +1,454 @@
++import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
++import axios, { type InternalAxiosRequestConfig } from "axios";
++
++import type { AiConfig } from "../src/stores/use-config-store";
++import { installBrowserStorage, storage } from "./helpers/browser-storage";
++
++let restoreStorage: () => void;
++const originalAdapter = axios.defaults.adapter;
++const originalFetch = globalThis.fetch;
++
++let configModule: typeof import("../src/stores/use-config-store");
++let videoModule: typeof import("../src/services/api/video");
++let i18nModule: typeof import("../src/i18n");
++
++beforeAll(async () => {
++    restoreStorage = installBrowserStorage();
++    configModule = await import("../src/stores/use-config-store");
++    videoModule = await import("../src/services/api/video");
++    i18nModule = await import("../src/i18n");
++});
++
++beforeEach(() => {
++    axios.defaults.adapter = async () => {
++        throw new Error("Unexpected Axios request in offline test");
++    };
++    globalThis.fetch = async () => {
++        throw new Error("Unexpected fetch in offline test");
++    };
++    configModule.useConfigStore.setState({ config: structuredClone(configModule.defaultConfig) });
++    storage.clear();
++});
++
++afterEach(() => {
++    configModule.useConfigStore.setState({ config: structuredClone(configModule.defaultConfig) });
++    storage.clear();
++    axios.defaults.adapter = originalAdapter;
++    globalThis.fetch = originalFetch;
++});
++
++afterAll(() => {
++    restoreStorage();
++});
++
++test("first visit hydrates the gateway video models without an API key", async () => {
++    const { useConfigStore, buildApiUrl, selectableModelsByCapability } = configModule;
++    await useConfigStore.persist.rehydrate();
++    expect(useConfigStore.persist.hasHydrated()).toBe(true);
++
++    const config = useConfigStore.getState().config;
++    expect(config.baseUrl).toBe("https://8.216.57.93");
++    expect(config.apiKey).toBe("");
++    expect(config.channels).toHaveLength(1);
++    expect(config.channels[0].baseUrl).toBe("https://8.216.57.93");
++    expect(config.channels[0].apiKey).toBe("");
++    expect(config.channels[0].models).toEqual([
++        { name: "Sd-2.0fast", capability: "video" },
++        { name: "Sd-2.0满血933", capability: "video" },
++        { name: "Sd-2.5", capability: "video" },
++        { name: "minmax-h3", capability: "video" },
++    ]);
++    expect(selectableModelsByCapability(config, "video")).toEqual(["default::Sd-2.0fast", "default::Sd-2.0满血933", "default::Sd-2.5", "default::minmax-h3"]);
++    expect(config.videoModel).toBe("default::Sd-2.0fast");
++    expect(buildApiUrl(config.channels[0].baseUrl, "/models")).toBe("https://8.216.57.93/v1/models");
++    expect(buildApiUrl(config.channels[0].baseUrl, "/videos")).toBe("https://8.216.57.93/v1/videos");
++});
++
++test("hydration preserves saved channels, API keys and preferences", async () => {
++    const { CONFIG_STORE_KEY, defaultConfig, useConfigStore } = configModule;
++    const savedConfig: AiConfig = {
++        ...structuredClone(defaultConfig),
++        baseUrl: "https://saved.example/v1",
++        apiKey: "fixture-global-key",
++        channels: [
++            {
++                id: "saved-channel",
++                name: "Saved channel",
++                baseUrl: "https://saved-channel.example",
++                apiKey: "fixture-channel-key",
++                apiFormat: "openai",
++                models: [{ name: "saved-video", capability: "video" }],
++            },
++        ],
++        models: ["saved-channel::saved-video"],
++        videoModel: "saved-channel::saved-video",
++        size: "9:16",
++        videoSeconds: "8",
++        vquality: "1080",
++        videoGenerateAudio: "false",
++        videoMode: "frames",
++        systemPrompt: "Saved preference",
++        proxyEnabled: true,
++        proxyUrl: "http://127.0.0.1:4999",
++    };
++    storage.setItem(CONFIG_STORE_KEY, JSON.stringify({ state: { config: savedConfig }, version: 0 }));
++
++    await useConfigStore.persist.rehydrate();
++
++    expect(useConfigStore.getState().config).toEqual(savedConfig);
++});
++
++function savedChannelConfig(name: string): AiConfig {
++    return {
++        ...structuredClone(configModule.defaultConfig),
++        channels: [{
++            id: "zhi168",
++            name,
++            baseUrl: "https://zhi168.example/v1",
++            apiKey: "fixture-zhi168-key",
++            apiFormat: "openai",
++            models: [{ name: "Sd-2.5", capability: "video", script: "// zhi168 custom request" }],
++        }],
++        models: ["zhi168::Sd-2.5"],
++        videoModel: "zhi168::Sd-2.5",
++    };
++}
++
++test.each([
++    { name: "大力牛视频 · zhi168", expected: "大力牛视频" },
++    { name: "ZHI168 | 大力牛视频", expected: "大力牛视频" },
++    { name: "大力牛 / zHi168 - 视频", expected: "大力牛 - 视频" },
++    { name: "大力牛_zhi168", expected: "大力牛" },
++    { name: "大力牛：zhi168", expected: "大力牛" },
++    { name: "大力牛视频（ZHI168）", expected: "大力牛视频" },
++    { name: "(zhi168) 大力牛视频", expected: "大力牛视频" },
++    { name: " zhi168 · ZHI168 ", expected: "" },
++])("saved channel display name $name is cleaned without changing its request configuration", async ({ name, expected }) => {
++    const { CONFIG_STORE_KEY, useConfigStore, modelOptionLabel, resolveModelRequestConfig } = configModule;
++    const savedConfig = savedChannelConfig(name);
++    storage.setItem(CONFIG_STORE_KEY, JSON.stringify({ state: { config: savedConfig }, version: 0 }));
++
++    await useConfigStore.persist.rehydrate();
++
++    const config = useConfigStore.getState().config;
++    const cleanName = expected || i18nModule.default.t("config.channels.defaultName");
++    expect(config).toEqual({ ...savedConfig, channels: [{ ...savedConfig.channels[0], name: cleanName }] });
++    expect(modelOptionLabel(config, config.videoModel)).toBe(`Sd-2.5（${cleanName}）`);
++    expect(modelOptionLabel(savedConfig, savedConfig.videoModel)).toBe(`Sd-2.5（${cleanName}）`);
++    expect(resolveModelRequestConfig(config, config.videoModel)).toMatchObject({ baseUrl: savedConfig.channels[0].baseUrl, apiKey: savedConfig.channels[0].apiKey, model: "Sd-2.5" });
++});
++
++test("creating and saving channels cleans names while retaining credentials, IDs and scripts", () => {
++    const { useConfigStore, createModelChannel } = configModule;
++    const savedConfig = savedChannelConfig("大力牛视频 · ZHI168");
++    const expected = { ...savedConfig.channels[0], name: "大力牛视频" };
++
++    expect(createModelChannel(savedConfig.channels[0])).toEqual(expected);
++    useConfigStore.getState().updateConfig("channels", savedConfig.channels);
++
++    expect(useConfigStore.getState().config.channels).toEqual([expected]);
++    const persisted = JSON.parse(storage.getItem(configModule.CONFIG_STORE_KEY)!);
++    expect(persisted.state.config.channels).toEqual([expected]);
++});
++
++test("credential import cleans an existing name even when credentials are unchanged", () => {
++    const { useConfigStore } = configModule;
++    const savedConfig = savedChannelConfig("大力牛视频 · zhi168");
++    useConfigStore.setState({ config: savedConfig });
++
++    const result = useConfigStore.getState().importChannelCredentials({ baseUrl: savedConfig.channels[0].baseUrl, apiKey: savedConfig.channels[0].apiKey });
++
++    expect(result).toEqual({ status: "updated", channelName: "大力牛视频" });
++    expect(useConfigStore.getState().config).toEqual({ ...savedConfig, channels: [{ ...savedConfig.channels[0], name: "大力牛视频" }] });
++});
++
++test("config file import immediately cleans channel display names and preserves all other fields", async () => {
++    const { importAppConfig } = await import("../src/services/config-file");
++    const { usePromptSourceStore } = await import("../src/stores/use-prompt-source-store");
++    const { useConfigStore, defaultWebdavSyncConfig } = configModule;
++    const savedConfig = savedChannelConfig("zhi168 · 大力牛视频");
++    const { sources, schedule } = usePromptSourceStore.getState();
++    const file = new File([JSON.stringify({ app: "infinite-canvas", version: 1, config: savedConfig, webdav: defaultWebdavSyncConfig, promptSources: { sources, schedule } })], "config.json", { type: "application/json" });
++
++    await importAppConfig(file);
++
++    expect(useConfigStore.getState().config).toEqual({ ...savedConfig, channels: [{ ...savedConfig.channels[0], name: "大力牛视频" }] });
++});
++
++test("built-in video creation and polling use gateway URLs and the channel Bearer key", async () => {
++    const { useConfigStore } = configModule;
++    await useConfigStore.persist.rehydrate();
++    const defaults = useConfigStore.getState().config;
++    const config: AiConfig = {
++        ...defaults,
++        apiKey: "fixture-legacy-key",
++        channels: defaults.channels.map((channel) => ({ ...channel, apiKey: "fixture-video-key" })),
++    };
++    useConfigStore.setState({ config });
++
++    const requests: InternalAxiosRequestConfig[] = [];
++    const video = new Blob(["fixture-video"], { type: "video/mp4" });
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        let data: unknown;
++        if (request.method === "post" && request.url === "https://8.216.57.93/v1/videos") data = { id: "fixture-task", status: "queued" };
++        else if (request.method === "get" && request.url === "https://8.216.57.93/v1/videos/fixture-task") data = { id: "fixture-task", status: "completed" };
++        else if (request.method === "get" && request.url === "https://8.216.57.93/v1/videos/fixture-task/content") data = video;
++        else throw new Error(`Unexpected offline request: ${request.method} ${request.url}`);
++        return { data, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    const task = await videoModule.createVideoGenerationTask(config, "A test scene");
++    expect(task).toEqual({ id: "fixture-task", provider: "openai", model: "default::Sd-2.0fast" });
++    expect(requests[0].data).toBeInstanceOf(FormData);
++    const body = requests[0].data as FormData;
++    expect(Object.fromEntries(body)).toEqual({
++        model: "Sd-2.0fast",
++        prompt: "A test scene",
++        seconds: "4",
++        aspect_ratio: "16:9",
++        resolution: "720p",
++        with_audio: "true",
++    });
++
++    const state = await videoModule.pollVideoGenerationTask(config, task);
++    expect(state).toEqual({ status: "completed", result: { blob: video } });
++    expect(requests.map((request) => [request.method, request.url])).toEqual([
++        ["post", "https://8.216.57.93/v1/videos"],
++        ["get", "https://8.216.57.93/v1/videos/fixture-task"],
++        ["get", "https://8.216.57.93/v1/videos/fixture-task/content"],
++    ]);
++    for (const request of requests) expect(request.headers.get("Authorization")).toBe("Bearer fixture-video-key");
++});
++
++test.each([
++    { baseUrl: "https://8.216.57.93", model: "Sd-2.0fast", size: "720x720", resolution: "720", ratio: "1:1", mode: "frames" },
++    { baseUrl: "https://8.216.57.93/", model: "Sd-2.0满血933", size: "720x1280", resolution: "720", ratio: "9:16", mode: "reference" },
++    { baseUrl: "https://8.216.57.93/v1", model: "Sd-2.5", size: "1680x720", resolution: "720", ratio: "21:9", mode: "frames" },
++    { baseUrl: "https://8.216.57.93/v1/", model: "minmax-h3", size: "1366x768", resolution: "768", ratio: "16:9", mode: "reference" },
++])("gateway $model uses canonical fields and preserves ordered image references at $baseUrl", async ({ baseUrl, model, size, resolution, ratio, mode }) => {
++    const defaults = configModule.defaultConfig;
++    const selectedModel = `default::${model}`;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        model: selectedModel,
++        videoModel: selectedModel,
++        size,
++        vquality: resolution,
++        videoGenerateAudio: "false",
++        videoWatermark: "true",
++        videoMode: mode,
++        channels: [{ ...structuredClone(defaults.channels[0]), baseUrl, apiKey: "fixture-video-key" }],
++    };
++    const references = ["first-reference", "second-reference"].map((content, index) => ({
++        id: `reference-${index}`,
++        name: `reference-${index}.png`,
++        type: "image/png",
++        dataUrl: `data:image/png;base64,${btoa(content)}`,
++    }));
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        return { data: { id: "fixture-task" }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    await videoModule.createVideoGenerationTask(config, "Reference scene", references);
++
++    expect(requests).toHaveLength(1);
++    expect(requests[0].method).toBe("post");
++    expect(requests[0].url).toBe("https://8.216.57.93/v1/videos");
++    const body = requests[0].data as FormData;
++    expect(Object.fromEntries(Array.from(body).filter(([, value]) => typeof value === "string"))).toEqual({
++        model,
++        prompt: "Reference scene",
++        seconds: "4",
++        aspect_ratio: ratio,
++        resolution: `${resolution}p`,
++        with_audio: "false",
++    });
++    const files = Array.from(body).filter(([, value]) => value instanceof File);
++    expect(files.map(([field]) => field)).toEqual(["reference_images", "reference_images"]);
++    expect(await Promise.all(files.map(([, file]) => (file as File).text()))).toEqual(["first-reference", "second-reference"]);
++    expect(files.map(([, file]) => (file as File).type)).toEqual(["image/png", "image/png"]);
++});
++
++test.each([
++    { baseUrl: "https://other-gateway.example", model: "Sd-2.0fast" },
++    { baseUrl: "http://8.216.57.93", model: "Sd-2.0fast" },
++    { baseUrl: "https://8.216.57.93:8443", model: "Sd-2.0fast" },
++    { baseUrl: "https://8.216.57.93", model: "other-video-model" },
++])("other OpenAI requests preserve their original fields for $model at $baseUrl", async ({ baseUrl, model }) => {
++    const defaults = configModule.defaultConfig;
++    const selectedModel = `default::${model}`;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        model: selectedModel,
++        videoModel: selectedModel,
++        size: "1280x720",
++        videoGenerateAudio: "false",
++        videoWatermark: "true",
++        videoMode: "frames",
++        channels: [
++            {
++                ...structuredClone(defaults.channels[0]),
++                baseUrl,
++                apiKey: "fixture-video-key",
++                models: [{ name: model, capability: "video" }],
++            },
++        ],
++    };
++    const references = ["first-frame", "last-frame"].map((content, index) => ({
++        id: `reference-${index}`,
++        name: `reference-${index}.png`,
++        type: "image/png",
++        dataUrl: `data:image/png;base64,${btoa(content)}`,
++    }));
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        return { data: { id: "fixture-task" }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    await videoModule.createVideoGenerationTask(config, "Frame scene", references);
++
++    expect(requests).toHaveLength(1);
++    expect(requests[0].url).toBe(`${baseUrl}/v1/videos`);
++    const body = requests[0].data as FormData;
++    expect(Object.fromEntries(Array.from(body).filter(([, value]) => typeof value === "string"))).toEqual({
++        model,
++        prompt: "Frame scene",
++        seconds: "4",
++        size: "1280x720",
++        resolution_name: "720p",
++        generate_audio: "false",
++        watermark: "true",
++        mode: "frames",
++    });
++    const files = Array.from(body).filter(([, value]) => value instanceof File);
++    expect(files.map(([field]) => field)).toEqual(["first_frame", "last_frame"]);
++    expect(await Promise.all(files.map(([, file]) => (file as File).text()))).toEqual(["first-frame", "last-frame"]);
++});
++
++test.each([
++    { model: "Sd-2.0fast", baseUrl: "https://8.216.57.93", status: "failed", errorMessage: undefined, proxyEnabled: false },
++    { model: "Sd-2.0满血933", baseUrl: "https://8.216.57.93/v1", status: "cancelled", errorMessage: "", proxyEnabled: false },
++    { model: "Sd-2.5", baseUrl: "https://8.216.57.93/", status: "failed", errorMessage: "{}", proxyEnabled: false },
++    { model: "minmax-h3", baseUrl: "https://8.216.57.93/v1/", status: "cancelled", errorMessage: "  ", proxyEnabled: true },
++])("gateway $model retrieves missing $status details from the native task without resubmitting", async ({ model, baseUrl, status, errorMessage, proxyEnabled }) => {
++    const defaults = configModule.defaultConfig;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        proxyEnabled,
++        proxyUrl: "http://127.0.0.1:4999",
++        channels: [{ ...structuredClone(defaults.channels[0]), baseUrl, apiKey: "fixture-video-key" }],
++    };
++    configModule.useConfigStore.setState({ config });
++    const controller = new AbortController();
++    const task = { id: "fixture-public-task", provider: "openai" as const, model: `default::${model}` };
++    const prefix = proxyEnabled ? "http://127.0.0.1:4999/" : "";
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        const data =
++            requests.length === 1
++                ? { id: task.id, status, error: { message: errorMessage }, video_url: "https://cdn.example/previous.mp4" }
++                : { task_id: task.id, status: "failed", error_message: '{"detail":"MATERIAL_LIMIT_EXCEEDED: reference unavailable"}' };
++        return { data, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    const state = await videoModule.pollVideoGenerationTask(config, task, { signal: controller.signal });
++
++    expect(state).toEqual({ status: "failed", error: "MATERIAL_LIMIT_EXCEEDED: reference unavailable" });
++    expect(requests.map((request) => [request.method, request.url])).toEqual([
++        ["get", `${prefix}https://8.216.57.93/v1/videos/${task.id}`],
++        ["get", `${prefix}https://8.216.57.93/mengwuxian/api/v1/video-tasks/${task.id}`],
++    ]);
++    for (const request of requests) {
++        expect(request.headers.get("Authorization")).toBe("Bearer fixture-video-key");
++        expect(request.signal).toBe(controller.signal);
++    }
++});
++
++test("gateway task failure with readable detail skips the native query", async () => {
++    const defaults = configModule.defaultConfig;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        channels: [{ ...structuredClone(defaults.channels[0]), apiKey: "fixture-video-key" }],
++    };
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        return { data: { id: "fixture-task", status: "failed", error: { message: '{"detail":"Provider capacity exhausted"}' } }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    const state = await videoModule.pollVideoGenerationTask(config, { id: "fixture-task", provider: "openai", model: config.videoModel });
++
++    expect(state).toEqual({ status: "failed", error: "Provider capacity exhausted" });
++    expect(requests.map((request) => [request.method, request.url])).toEqual([["get", "https://8.216.57.93/v1/videos/fixture-task"]]);
++});
++
++test.each(["missing detail", "query failure"])("native %s preserves the failed task and generic message", async (caseName) => {
++    const defaults = configModule.defaultConfig;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        channels: [{ ...structuredClone(defaults.channels[0]), apiKey: "fixture-video-key" }],
++    };
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        if (requests.length === 2 && caseName === "query failure") throw new Error("Native task query unavailable");
++        const data = requests.length === 1 ? { id: "fixture-task", status: "failed" } : { task_id: "fixture-task", status: "failed", error_message: "  " };
++        return { data, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    const state = await videoModule.pollVideoGenerationTask(config, { id: "fixture-task", provider: "openai", model: config.videoModel });
++
++    expect(state).toEqual({ status: "failed", error: i18nModule.default.t("apiErrors.videoGenerationFailed") });
++    expect(requests.map((request) => request.method)).toEqual(["get", "get"]);
++});
++
++test.each([
++    { baseUrl: "https://other-gateway.example", model: "Sd-2.0fast" },
++    { baseUrl: "http://8.216.57.93", model: "Sd-2.0fast" },
++    { baseUrl: "https://8.216.57.93:8443", model: "Sd-2.0fast" },
++    { baseUrl: "https://8.216.57.93", model: "other-video-model" },
++])("failed $model at $baseUrl does not call the native gateway query", async ({ baseUrl, model }) => {
++    const defaults = configModule.defaultConfig;
++    const selectedModel = `default::${model}`;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        channels: [{ ...structuredClone(defaults.channels[0]), baseUrl, apiKey: "fixture-video-key", models: [{ name: model, capability: "video" }] }],
++    };
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        return { data: { id: "fixture-task", status: "failed" }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    const state = await videoModule.pollVideoGenerationTask(config, { id: "fixture-task", provider: "openai", model: selectedModel });
++
++    expect(state).toEqual({ status: "failed", error: i18nModule.default.t("apiErrors.videoGenerationFailed") });
++    expect(requests.map((request) => [request.method, request.url])).toEqual([["get", `${baseUrl}/v1/videos/fixture-task`]]);
++});
++
++test.each(["axios cancellation", "aborted signal", "abort error"])("native detail lookup propagates %s", async (caseName) => {
++    const defaults = configModule.defaultConfig;
++    const config: AiConfig = {
++        ...structuredClone(defaults),
++        channels: [{ ...structuredClone(defaults.channels[0]), apiKey: "fixture-video-key" }],
++    };
++    const controller = new AbortController();
++    const cancelled = caseName === "abort error" ? new DOMException("Aborted", "AbortError") : new axios.CanceledError("Fixture cancelled");
++    const requests: InternalAxiosRequestConfig[] = [];
++    axios.defaults.adapter = async (request) => {
++        requests.push(request);
++        if (requests.length === 2) {
++            if (caseName === "aborted signal") controller.abort();
++            throw cancelled;
++        }
++        return { data: { id: "fixture-task", status: "failed" }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++
++    await expect(videoModule.pollVideoGenerationTask(config, { id: "fixture-task", provider: "openai", model: config.videoModel }, { signal: controller.signal })).rejects.toBe(cancelled);
++    expect(requests.map((request) => request.method)).toEqual(["get", "get"]);
++});
+diff --git a/web/tests/helpers/browser-storage.ts b/web/tests/helpers/browser-storage.ts
+new file mode 100644
+index 0000000..949c129
+--- /dev/null
++++ b/web/tests/helpers/browser-storage.ts
+@@ -0,0 +1,26 @@
++const values = new Map<string, string>();
++export const storage: Storage = {
++    get length() { return values.size; },
++    clear: () => values.clear(),
++    getItem: (key) => values.get(key) ?? null,
++    key: (index) => Array.from(values.keys())[index] ?? null,
++    removeItem: (key) => values.delete(key),
++    setItem: (key, value) => values.set(key, String(value)),
++};
++
++// Zustand captures this storage object when its shared module first loads.
++// Reuse it across test files so hydration and direct writes see the same data.
++export function installBrowserStorage() {
++    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
++    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
++    storage.clear();
++    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
++    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage } });
++    return () => {
++        storage.clear();
++        if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
++        else Reflect.deleteProperty(globalThis, "localStorage");
++        if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
++        else Reflect.deleteProperty(globalThis, "window");
++    };
++}
+diff --git a/web/tests/video-capabilities.test.ts b/web/tests/video-capabilities.test.ts
+new file mode 100644
+index 0000000..45a99f5
+--- /dev/null
++++ b/web/tests/video-capabilities.test.ts
+@@ -0,0 +1,105 @@
++import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
++import axios from "axios";
++
++import type { AiConfig } from "../src/stores/use-config-store";
++import { installBrowserStorage } from "./helpers/browser-storage";
++
++let restoreStorage: () => void;
++const originalAdapter = axios.defaults.adapter;
++let getNiuVideoCapabilities: typeof import("../src/lib/video-capabilities").getNiuVideoCapabilities;
++let videoSettingsError: typeof import("../src/lib/video-capabilities").videoSettingsError;
++let computeVideoSize: typeof import("../src/lib/media-size").computeVideoSize;
++let parseVideoResolution: typeof import("../src/lib/media-size").parseVideoResolution;
++let defaultConfig: AiConfig;
++let createVideoGenerationTask: typeof import("../src/services/api/video").createVideoGenerationTask;
++
++beforeAll(async () => {
++    restoreStorage = installBrowserStorage();
++    ({ getNiuVideoCapabilities, videoSettingsError } = await import("../src/lib/video-capabilities"));
++    ({ computeVideoSize, parseVideoResolution } = await import("../src/lib/media-size"));
++    ({ defaultConfig } = await import("../src/stores/use-config-store"));
++    ({ createVideoGenerationTask } = await import("../src/services/api/video"));
++});
++beforeEach(() => { axios.defaults.adapter = async () => { throw new Error("Unexpected offline request"); }; });
++afterEach(() => { axios.defaults.adapter = originalAdapter; });
++afterAll(() => {
++    restoreStorage();
++});
++
++function videoConfig(model: string, resolution: string, size = "16:9"): AiConfig {
++    return { ...structuredClone(defaultConfig), model: `default::${model}`, videoModel: `default::${model}`, vquality: resolution, size, channels: [{ ...structuredClone(defaultConfig.channels[0]), apiKey: "fixture-key" }] };
++}
++
++test.each([
++    ["Sd-2.0fast", ["720", "1080"]],
++    ["Sd-2.0满血933", ["720", "1080", "4k"]],
++    ["Sd-2.5", ["480", "720", "1080"]],
++    ["minmax-h3", ["768", "2k"]],
++] as const)("%s exposes only its supported resolutions", (model, resolutions) => {
++    expect(getNiuVideoCapabilities("https://8.216.57.93/v1", model)?.resolutions).toEqual(resolutions);
++});
++
++test("capabilities are scoped to the gateway and known models", () => {
++    expect(getNiuVideoCapabilities("https://other.example", "Sd-2.0fast")).toBeUndefined();
++    expect(getNiuVideoCapabilities("https://8.216.57.93", "custom")).toBeUndefined();
++    expect(getNiuVideoCapabilities("invalid", "Sd-2.0fast")).toBeUndefined();
++    expect(getNiuVideoCapabilities("https://8.216.57.93", "minmax-h3")?.ratios).toEqual(["16:9", "9:16", "1:1"]);
++});
++
++test.each([
++    ["Sd-2.0fast", "480", "16:9"],
++    ["minmax-h3", "720", "16:9"],
++    ["minmax-h3", "768", "21:9"],
++    ["Sd-2.5", "720", "auto"],
++    ["Sd-2.5", "720", "1000x720"],
++    ["Sd-2.0fast", "garbage", "16:9"],
++] as const)("%s rejects unsupported %s / %s before creating a task", async (model, resolution, size) => {
++    const config = videoConfig(model, resolution, size);
++    expect(videoSettingsError(config)).not.toBe("");
++    await expect(createVideoGenerationTask(config, "Offline validation")).rejects.toThrow(videoSettingsError(config));
++});
++
++test.each([
++    ["Sd-2.5", "480", "16:9"],
++    ["Sd-2.0fast", "1080", "1920x1080"],
++    ["minmax-h3", "768", "1366x768"],
++    ["minmax-h3", "2k", "9:16"],
++    ["Sd-2.0满血933", "4k", "21:9"],
++] as const)("%s accepts supported %s / %s", (model, resolution, size) => {
++    expect(videoSettingsError(videoConfig(model, resolution, size))).toBe("");
++});
++
++test("custom scripts keep control of their own settings", () => {
++    const config = videoConfig("Sd-2.0fast", "480", "auto");
++    config.channels[0].models = [{ name: "Sd-2.0fast", capability: "video", script: "return {url: 'https://example.com/video.mp4'}" }];
++    expect(videoSettingsError(config)).toBe("");
++});
++
++test.each([["minmax-h3", "2k"], ["Sd-2.0满血933", "4k"]] as const)("%s sends the literal %s resolution without inventing pixels", async (model, resolution) => {
++    expect(parseVideoResolution(resolution)).toBe(resolution);
++    expect(computeVideoSize(resolution, "16:9")).toBe("auto");
++    const requests: FormData[] = [];
++    const originalAdapter = axios.defaults.adapter;
++    axios.defaults.adapter = async (config) => {
++        requests.push(config.data as FormData);
++        return { data: { id: "offline-task" }, status: 200, statusText: "OK", headers: {}, config };
++    };
++    try {
++        await createVideoGenerationTask(videoConfig(model, resolution), "Offline wire format");
++        expect(requests).toHaveLength(1);
++        expect(requests[0].get("resolution")).toBe(resolution);
++        expect(requests[0].get("aspect_ratio")).toBe("16:9");
++    } finally {
++        axios.defaults.adapter = originalAdapter;
++    }
++});
++
++test("gateway validation and requests normalize spaced K tiers consistently", async () => {
++    const config = videoConfig("minmax-h3", " 2K ");
++    expect(videoSettingsError(config)).toBe("");
++    axios.defaults.adapter = async (request) => {
++        expect((request.data as FormData).get("resolution")).toBe("2k");
++        return { data: { id: "offline-task" }, status: 200, statusText: "OK", headers: {}, config: request };
++    };
++    await createVideoGenerationTask(config, "Offline normalization");
++});
+diff --git a/web/tests/video-settings-panel.test.tsx b/web/tests/video-settings-panel.test.tsx
+new file mode 100644
+index 0000000..e9cb9db
+--- /dev/null
++++ b/web/tests/video-settings-panel.test.tsx
+@@ -0,0 +1,100 @@
++import { afterAll, beforeAll, expect, test } from "bun:test";
++import { renderToStaticMarkup } from "react-dom/server";
++
++import { canvasThemes } from "../src/lib/canvas-theme";
++import type { AiConfig } from "../src/stores/use-config-store";
++import { installBrowserStorage } from "./helpers/browser-storage";
++
++let restoreStorage: () => void;
++let configModule: typeof import("../src/stores/use-config-store");
++let panelModule: typeof import("../src/components/video-settings-panel");
++let i18nModule: typeof import("../src/i18n");
++
++beforeAll(async () => {
++    restoreStorage = installBrowserStorage();
++    configModule = await import("../src/stores/use-config-store");
++    panelModule = await import("../src/components/video-settings-panel");
++    i18nModule = await import("../src/i18n");
++});
++
++afterAll(() => {
++    restoreStorage();
++});
++
++function renderSettings(model: string, options: { size?: string; resolution?: string; baseUrl?: string; script?: string } = {}) {
++    const config: AiConfig = {
++        ...structuredClone(configModule.defaultConfig),
++        model: `default::${model}`,
++        videoModel: `default::${model}`,
++        size: options.size || "16:9",
++        vquality: options.resolution || "720",
++        channels: [{
++            ...structuredClone(configModule.defaultConfig.channels[0]),
++            baseUrl: options.baseUrl || "https://8.216.57.93",
++            models: [{ name: model, capability: "video", script: options.script }],
++        }],
++    };
++    const changes: Array<[string, string]> = [];
++    const html = renderToStaticMarkup(<panelModule.VideoSettingsPanel config={config} theme={canvasThemes.light} onConfigChange={(key, value) => changes.push([key, value])} />);
++    const buttons = new Map(Array.from(html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g), (match) => [match[2].replace(/<[^>]*>/g, "").trim(), match[1]]));
++    const inputs = Array.from(html.matchAll(/<input\b([^>]*)>/g), (match) => match[1]);
++    return { html, buttons, inputs, changes };
++}
++
++test.each([
++    { model: "Sd-2.0fast", resolutions: ["720p", "1080p"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9"] },
++    { model: "Sd-2.0满血933", resolutions: ["720p", "1080p", "4K"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9"] },
++    { model: "Sd-2.5", resolutions: ["480p", "720p", "1080p"], ratios: ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9"] },
++    { model: "minmax-h3", resolutions: ["768p", "2K"], ratios: ["1:1", "16:9", "9:16"] },
++])("$model disables every unsupported resolution and ratio", ({ model, resolutions, ratios }) => {
++    const view = renderSettings(model);
++    for (const label of ["480p", "720p", "768p", "1080p", "2K", "4K"]) {
++        expect(view.buttons.has(label)).toBe(true);
++        expect(/\bdisabled=""/.test(view.buttons.get(label)!)).toBe(!resolutions.includes(label));
++    }
++    for (const label of ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9", i18nModule.default.t("settingsPanels.common.auto")]) {
++        expect(view.buttons.has(label)).toBe(true);
++        expect(/\bdisabled=""/.test(view.buttons.get(label)!)).toBe(!ratios.includes(label));
++    }
++    for (const label of ["W", "H", i18nModule.default.t("settingsPanels.video.quality")]) {
++        expect(view.inputs.find((input) => input.includes(`aria-label="${label}"`))).toContain('disabled=""');
++    }
++});
++
++test("switching to a model with unsupported saved settings shows an alert without changing the settings", () => {
++    const view = renderSettings("Sd-2.0fast", { resolution: "480", size: "3:4" });
++    expect(view.html).toContain('role="alert"');
++    expect(view.buttons.get("480p")).toContain('aria-pressed="true"');
++    expect(view.buttons.get("720p")).not.toContain('disabled=""');
++    expect(view.changes).toEqual([]);
++});
++
++test.each([
++    { model: "minmax-h3", resolution: "2k" },
++    { model: "Sd-2.0满血933", resolution: "4k" },
++])("$model keeps the $resolution tier without inventing pixel dimensions", ({ model, resolution }) => {
++    const view = renderSettings(model, { resolution });
++    expect(view.buttons.get(resolution.toUpperCase())).toContain('aria-pressed="true"');
++    for (const label of ["W", "H"]) {
++        const input = view.inputs.find((item) => item.includes(`aria-label="${label}"`));
++        expect(input).toContain('value=""');
++        expect(input).toContain('placeholder="—"');
++    }
++    expect(view.html).not.toContain('role="alert"');
++});
++
++test.each([
++    { baseUrl: "https://other-gateway.example" },
++    { baseUrl: "https://8.216.57.93", script: "return { url: 'fixture' };" },
++])("other providers and custom model scripts keep editable settings", (options) => {
++    const view = renderSettings("Sd-2.0fast", options);
++    expect(view.buttons.get("480p")).not.toContain('disabled=""');
++    expect(view.buttons.get(i18nModule.default.t("settingsPanels.common.auto"))).not.toContain('disabled=""');
++    expect(view.buttons.has("2K")).toBe(false);
++    for (const label of ["W", "H", i18nModule.default.t("settingsPanels.video.quality")]) {
++        const input = view.inputs.find((item) => item.includes(`aria-label="${label}"`));
++        expect(input).toBeDefined();
++        expect(input).not.toContain('disabled=""');
++    }
++    expect(view.html).not.toContain('role="alert"');
++});
