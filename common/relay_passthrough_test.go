@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // TestRelayErrorPassthroughFor locks the operator-facing contract of the relay
@@ -65,20 +66,140 @@ func TestRelayErrorPassthroughFor(t *testing.T) {
 }
 
 // TestPassthroughRelayJSONKeepsUpstreamDiagnostics separates the two jobs of the
-// sanitizer: gateway provenance must never reach a client, upstream error text
-// must whenever pass-through is on.
+// sanitizer: gateway provenance and upstream identity must never reach a client,
+// the upstream's own diagnosis must whenever pass-through is on.
 func TestPassthroughRelayJSONKeepsUpstreamDiagnostics(t *testing.T) {
-	original := []byte(`{"error":{"type":"invalid_request_error","message":"upstream said no","metadata":{"hint":"keep"}},"channel_name":"private-provider","upstream_url":"https://private.invalid","system_fingerprint":"private-fingerprint","usage":{"cost":0.4},"usage_source":"private-worker"}`)
+	original := []byte(`{"error":{"type":"invalid_request_error","message":"upstream said no","metadata":{"hint":"drop"}},"channel_name":"private-provider","upstream_url":"https://private.invalid","system_fingerprint":"private-fingerprint","usage":{"cost":0.4},"usage_source":"private-worker"}`)
 
-	clean := PassthroughRelayJSON(original)
+	clean := PassthroughRelayJSON(original, "local-request")
 	require.Contains(t, string(clean), "upstream said no")
 	require.Contains(t, string(clean), "invalid_request_error")
-	require.Contains(t, string(clean), "keep")
-	for _, leaked := range []string{"private-provider", "private.invalid", "private-fingerprint", `"usage_source"`, `"cost"`} {
+	require.Contains(t, string(clean), "local-request")
+	for _, leaked := range []string{"private-provider", "private.invalid", "private-fingerprint", `"usage_source"`, `"cost"`, `"hint"`} {
 		require.NotContains(t, string(clean), leaked)
 	}
 	// The caller's copy must be untouched so accounting still sees provenance.
 	require.Contains(t, string(original), "private-provider")
+}
+
+// TestNormalizeUpstreamResponseId covers the success-path half of the identity
+// contract: the only vendor marker a client would otherwise be handed is the
+// inference backend's prefix on the response id.
+func TestNormalizeUpstreamResponseId(t *testing.T) {
+	const bedrock = "msg_bdrk_zbt6blkv7awvm7gaz5yt3xkwzmq4yoiebzqzluqexdzxsai24icq"
+	require.Equal(t, "msg_zbt6blkv7awvm7gaz5yt3xkwzmq4yoiebzqzluqexdzxsai24icq",
+		NormalizeUpstreamResponseId(bedrock))
+
+	// Ids that carry no known vendor marker, including another vendor's, are
+	// left alone rather than guessed at.
+	for _, untouched := range []string{"msg_abc", "chatcmpl-abc", "response-id", "", "msg_bdrk"} {
+		require.Equal(t, untouched, NormalizeUpstreamResponseId(untouched))
+	}
+}
+
+// TestScrubUpstreamDiagnostics covers the failure-text half.
+//
+// The upstream in front of Bedrock reports its own SDK wrapper, its cloud
+// request id, its exception class names and its account balances inside the
+// error message. A client can act on the schema error; it has no business
+// seeing which company, region or account produced it.
+func TestScrubUpstreamDiagnostics(t *testing.T) {
+	for _, tc := range []struct{ name, input, want string }{
+		{
+			name:  "sdk wrapper, cloud request id and exception class are unwrapped",
+			input: "InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400, RequestID: c05a1280-5f13-486a-93b8-c7ba005a8238, ValidationException: messages.0: user messages must have non-empty content",
+			want:  "messages.0: user messages must have non-empty content",
+		},
+		{
+			name:  "a multi hop relay chain collapses to nothing",
+			input: "rejected (request id: hop-a) (request id: hop-b) (request id: hop-c)",
+			want:  "rejected",
+		},
+		{
+			name:  "an upstream account diagnostic is replaced wholesale",
+			input: "预扣费额度失败, 用户剩余额度: ＄78.481940, 需要预扣费额度: ＄580.000022",
+			want:  upstreamAccountFailureMessage,
+		},
+		{
+			name:  "an english balance diagnostic is replaced too",
+			input: "insufficient credit balance: $12.00 available, $580.00 required",
+			want:  upstreamAccountFailureMessage,
+		},
+		{
+			name:  "a bare service hostname is removed",
+			input: "bedrock-runtime.us-east-1.amazonaws.com timed out",
+			want:  "timed out",
+		},
+		{
+			// Budget numbers are not balances: a caller has to read its own limits.
+			name:  "a quota limit that names the caller is kept",
+			input: "Number of request tokens has exceeded your per-minute rate limit",
+			want:  "Number of request tokens has exceeded your per-minute rate limit",
+		},
+		{
+			name:  "an empty message stays empty",
+			input: "",
+			want:  "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, ScrubUpstreamDiagnostics(tc.input))
+		})
+	}
+}
+
+// TestRelayJSONHidesUpstreamIdentity is the end-to-end contract for one relayed
+// document: the diagnosis and the generated content survive untouched, while
+// every upstream fingerprint in the envelope is gone.
+func TestRelayJSONHidesUpstreamIdentity(t *testing.T) {
+	original := []byte(`{"id":"msg_bdrk_abc123","model":"claude-sonnet-4-6","content":[{"type":"text","text":"Bedrock Runtime is a well known topic"}],"error":{"type":"invalid_request_error","message":"InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400, RequestID: 39f63b08-3af3-46d5-9929-1446ccffd920, ValidationException: messages.0: empty (request id: hop-a) (request id: hop-b)","metadata":{"provider":"private-provider"}}}`)
+
+	clean := PassthroughRelayJSON(original, "local-request")
+
+	require.Equal(t, "msg_abc123", gjson.GetBytes(clean, "id").String())
+	require.Equal(t, "invalid_request_error", gjson.GetBytes(clean, "error.type").String())
+	require.Equal(t, "messages.0: empty (request id: local-request)", gjson.GetBytes(clean, "error.message").String())
+	require.False(t, gjson.GetBytes(clean, "error.metadata").Exists())
+	// Generated content is never traversed, even when the model names the backend.
+	require.Equal(t, "Bedrock Runtime is a well known topic", gjson.GetBytes(clean, "content.0.text").String())
+	require.NotContains(t, string(clean), "private-provider")
+	// Accounting and operator diagnostics still see the original bytes.
+	require.Equal(t, "msg_bdrk_abc123", gjson.GetBytes(original, "id").String())
+}
+
+// TestRelayJSONHidesUpstreamIdentityWhenNothingElseRemains covers the degenerate
+// case: once the identity is gone there is no diagnosis left, so the operator
+// template is published rather than an empty message.
+func TestRelayJSONHidesUpstreamIdentityWhenNothingElseRemains(t *testing.T) {
+	only := []byte(`{"error":{"type":"invalid_request_error","message":"RequestID: 39f63b08-3af3-46d5-9929-1446ccffd920"}}`)
+	require.Equal(t, PublicRelayFailureMessage("local-request"),
+		gjson.GetBytes(PassthroughRelayJSON(only, "local-request"), "error.message").String())
+
+	account := []byte(`{"error":{"type":"permission_error","message":"预扣费额度失败, 用户剩余额度: ＄78.481940 (request id: up-hop)"}}`)
+	require.Equal(t, upstreamAccountFailureMessage+" (request id: local-request)",
+		gjson.GetBytes(PassthroughRelayJSON(account, "local-request"), "error.message").String())
+}
+
+// TestPublicRelayJSONHidesNestedResponseId covers the formats that nest the
+// response id one level down, including the streaming frame that clients key
+// their conversation state on.
+func TestPublicRelayJSONHidesNestedResponseId(t *testing.T) {
+	start := []byte(`{"type":"message_start","message":{"id":"msg_bdrk_stream","usage":{"input_tokens":1}}}`)
+	clean := PublicRelayJSON(start, "local-request", false)
+	require.Equal(t, "msg_stream", gjson.GetBytes(clean, "message.id").String())
+	require.Equal(t, "1", gjson.GetBytes(clean, "message.usage.input_tokens").String())
+}
+
+// TestPublicRelaySSEHidesStreamingUpstreamIdentity covers the same document
+// inside a frame: the sanitizer has to keep the framing byte-exact.
+func TestPublicRelaySSEHidesStreamingUpstreamIdentity(t *testing.T) {
+	frame := []byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_bdrk_abc\",\"model\":\"claude-sonnet-4-6\"}}\n\n")
+	clean := string(PublicRelaySSE(frame, "local-request", false))
+
+	require.Contains(t, clean, "event: message_start")
+	require.Contains(t, clean, `"id":"msg_abc"`)
+	require.Contains(t, clean, `"model":"claude-sonnet-4-6"`)
+	require.NotContains(t, clean, "msg_bdrk_")
 }
 
 // TestPublicRelayJSONRedactsWhenAsked is the mirror of the test above: the

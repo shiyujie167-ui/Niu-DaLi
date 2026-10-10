@@ -207,9 +207,9 @@ func (w *relayPrivacyWriter) writeJSON(body []byte) error {
 			w.ResponseWriter.WriteHeader(http.StatusBadGateway)
 		}
 	case passthrough:
-		// Hand the upstream document back with gateway provenance removed. The
-		// upstream status and error text are already on the wire untouched.
-		body = common.PassthroughRelayJSON(body)
+		// Hand the upstream document back with gateway and upstream provenance
+		// removed. The upstream status, error codes and diagnosis stay untouched.
+		body = common.PassthroughRelayJSON(body, w.ctx.GetString(common.RequestIdKey))
 	default:
 		redactErrors := w.Status() < 400 || w.Status() >= 500 || w.ctx.GetInt("channel_id") > 0
 		if w.Status() >= 400 && redactErrors {
