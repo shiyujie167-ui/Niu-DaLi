@@ -435,9 +435,18 @@ func (releasedAuditLog) TableName() string { return "logs" }
 // External tests create a new database per case on a loopback-only disposable
 // instance. They never drop databases or tables supplied through an environment variable.
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
+	return newAuditTestDatabaseWithSQLiteWriterQueue(t, kind, dsn, false)
+}
+
+func newAuditTestDatabaseWithSQLiteWriterQueue(t *testing.T, kind, dsn string, queueSQLiteWriters bool) (*gorm.DB, string) {
 	t.Helper()
 	if kind == "sqlite" {
 		path := t.TempDir() + "/audit.db"
+		if queueSQLiteWriters {
+			// Match the application's SQLite transaction mode so concurrent requests
+			// queue writers instead of failing when a read transaction upgrades to a write.
+			path += "?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+		}
 		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 		require.NoError(t, err)
 		return db, path
