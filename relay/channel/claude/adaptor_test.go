@@ -40,13 +40,9 @@ func TestConvertClaudeRequestTreatsZeroMaxTokensAsUnset(t *testing.T) {
 func TestConvertClaudeRequestPreservesNativeClaudeCodeThinking(t *testing.T) {
 	budget := 10000
 	maxTokens := uint(20000)
-	temperature := 0.7
-	topP := 0.9
 	req := &dto.ClaudeRequest{
 		Model:        "claude-opus-4-8",
 		MaxTokens:    &maxTokens,
-		Temperature:  &temperature,
-		TopP:         &topP,
 		Thinking:     &dto.Thinking{Type: "enabled", BudgetTokens: &budget},
 		OutputConfig: []byte(`{"effort":"high"}`),
 		Messages: []dto.ClaudeMessage{
@@ -68,9 +64,81 @@ func TestConvertClaudeRequestPreservesNativeClaudeCodeThinking(t *testing.T) {
 	assert.Equal(t, "enabled", converted.Thinking.Type)
 	require.NotNil(t, converted.Thinking.BudgetTokens)
 	assert.Equal(t, budget, *converted.Thinking.BudgetTokens)
+	assert.JSONEq(t, `{"effort":"high"}`, string(converted.OutputConfig))
+	assert.Empty(t, info.ConversionDiagnostics())
+}
+
+// TestConvertClaudeRequestDropsSamplingTheProviderRemoved covers the one native
+// request field the Claude adaptor does rewrite. Providers behind the newest
+// models deprecated temperature / top_p / top_k and answer 400 when they are
+// present, so forwarding them would fail a request that the same client already
+// gets through /v1/chat/completions, where ClaudeRender.ClearSampling drops
+// them. The removal is reported as a diagnostic instead of being silent.
+func TestConvertClaudeRequestDropsSamplingTheProviderRemoved(t *testing.T) {
+	maxTokens := uint(20000)
+	temperature := 0.7
+	topP := 0.9
+	req := &dto.ClaudeRequest{
+		Model:       "claude-opus-4-8",
+		MaxTokens:   &maxTokens,
+		Temperature: &temperature,
+		TopP:        &topP,
+		Messages: []dto.ClaudeMessage{
+			{Role: "user", Content: "hello"},
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: req.Model,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: req.Model,
+		},
+	}
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, req)
+	require.NoError(t, err)
+	converted, ok := out.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	assert.Nil(t, converted.Temperature)
+	assert.Nil(t, converted.TopP)
+
+	diagnostics := info.ConversionDiagnostics()
+	require.Len(t, diagnostics, 1)
+	assert.Equal(t, "claude_sampling_removed", diagnostics[0].Code)
+}
+
+// TestConvertClaudeRequestKeepsSamplingWhenChannelOptsOut covers the
+// allow_claude_native_sampling channel setting: a channel that fronts a
+// Claude-compatible proxy implementing its own sampling rules keeps the
+// values the client sent.
+func TestConvertClaudeRequestKeepsSamplingWhenChannelOptsOut(t *testing.T) {
+	maxTokens := uint(20000)
+	temperature := 0.7
+	topP := 0.9
+	req := &dto.ClaudeRequest{
+		Model:       "claude-opus-4-8",
+		MaxTokens:   &maxTokens,
+		Temperature: &temperature,
+		TopP:        &topP,
+		Messages: []dto.ClaudeMessage{
+			{Role: "user", Content: "hello"},
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: req.Model,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName:     req.Model,
+			ChannelOtherSettings: dto.ChannelOtherSettings{AllowClaudeNativeSampling: true},
+		},
+	}
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, req)
+	require.NoError(t, err)
+	converted, ok := out.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	require.NotNil(t, converted.Temperature)
+	require.NotNil(t, converted.TopP)
 	assert.Equal(t, temperature, *converted.Temperature)
 	assert.Equal(t, topP, *converted.TopP)
-	assert.JSONEq(t, `{"effort":"high"}`, string(converted.OutputConfig))
 	assert.Empty(t, info.ConversionDiagnostics())
 }
 

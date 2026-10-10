@@ -13,7 +13,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 
@@ -310,6 +309,9 @@ var claudeMessageRoles = map[string]bool{"user": true, "assistant": true, "syste
 //     relay/channel/claude/adaptor.go maps both 0 and a missing max_tokens to
 //     the per-model default. See
 //     TestConvertClaudeRequestTreatsZeroMaxTokensAsUnset.
+//   - Sampling controls a model no longer accepts (temperature / top_p / top_k
+//     on claude-opus-5-5 and siblings). The converter clears them and records a
+//     diagnostic, so only out-of-range values are rejected here.
 //   - Unknown JSON fields. Vendor extensions (chat_template_kwargs,
 //     context_management, mcp_servers, output_config, ...) are forwarded
 //     verbatim.
@@ -320,30 +322,21 @@ func validateClaudeRequest(request *dto.ClaudeRequest) error {
 		}
 	}
 
-	strictSampling := reasoning.ClaudeRequiresStrictSampling(request.Model)
-	if request.Temperature != nil {
-		switch {
-		case strictSampling && *request.Temperature != 1:
-			return fmt.Errorf("temperature: %v is not supported by model %q; omit temperature or use 1.0", *request.Temperature, request.Model)
-		case !strictSampling && (*request.Temperature < 0 || *request.Temperature > 1):
-			return fmt.Errorf("temperature: %v is out of range; expected 0.0 to 1.0", *request.Temperature)
-		}
+	// Sampling controls are range-checked but not rejected for models that no
+	// longer accept them: the converter clears an unsupported control and
+	// records a diagnostic instead (see ClaudeRender.ClearSampling), which is
+	// what the cross-protocol paths already do. Rejecting here would make one
+	// model answer 400 through native /v1/messages while the same request
+	// succeeds through /v1/chat/completions. Values outside the documented
+	// ranges are invalid for every model and stay errors.
+	if request.Temperature != nil && (*request.Temperature < 0 || *request.Temperature > 1) {
+		return fmt.Errorf("temperature: %v is out of range; expected 0.0 to 1.0", *request.Temperature)
 	}
-	if request.TopP != nil {
-		switch {
-		case strictSampling && (*request.TopP < 0.99 || *request.TopP > 1):
-			return fmt.Errorf("top_p: %v is not supported by model %q; omit top_p or use 0.99 to 1.0", *request.TopP, request.Model)
-		case !strictSampling && (*request.TopP <= 0 || *request.TopP > 1):
-			return fmt.Errorf("top_p: %v is out of range; expected greater than 0.0 and at most 1.0", *request.TopP)
-		}
+	if request.TopP != nil && (*request.TopP <= 0 || *request.TopP > 1) {
+		return fmt.Errorf("top_p: %v is out of range; expected greater than 0.0 and at most 1.0", *request.TopP)
 	}
-	if request.TopK != nil {
-		if strictSampling {
-			return fmt.Errorf("top_k: model %q does not accept top_k; omit it", request.Model)
-		}
-		if *request.TopK < 0 {
-			return fmt.Errorf("top_k: %d is out of range; expected 0 or greater", *request.TopK)
-		}
+	if request.TopK != nil && *request.TopK < 0 {
+		return fmt.Errorf("top_k: %d is out of range; expected 0 or greater", *request.TopK)
 	}
 	return nil
 }

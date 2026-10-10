@@ -54,6 +54,14 @@ type ClaudeOptions struct {
 	// emitted by cross-protocol conversion. Empty keeps the compatibility
 	// baseline web_search_20250305.
 	WebSearchToolVersion string
+	// AllowNativeSampling keeps temperature / top_p / top_k on native Claude
+	// requests instead of clearing them for models that no longer accept
+	// sampling controls. Leave it false so a native /v1/messages request is
+	// rendered like the cross-protocol paths, which clear those controls
+	// (ClaudeRender.ClearSampling); set it only for channels that front a
+	// Claude-compatible proxy implementing its own sampling rules. The host
+	// reads it from the channel's allow_claude_native_sampling setting.
+	AllowNativeSampling bool
 }
 
 type GeminiOptions struct {

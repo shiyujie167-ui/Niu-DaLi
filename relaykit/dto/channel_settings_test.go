@@ -732,3 +732,27 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
 }
+
+// TestChannelOtherSettingsAllowClaudeNativeSamplingJSONRoundTrip pins the
+// channel-level opt-out used by channels that front a Claude-compatible proxy.
+// It must survive a settings round trip and stay absent from the payload when
+// unset, so an untouched channel cannot start forwarding sampling controls to a
+// provider that rejects them.
+func TestChannelOtherSettingsAllowClaudeNativeSamplingJSONRoundTrip(t *testing.T) {
+	encoded, err := json.Marshal(ChannelOtherSettings{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "allow_claude_native_sampling")
+
+	encoded, err = json.Marshal(ChannelOtherSettings{AllowClaudeNativeSampling: true})
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"allow_claude_native_sampling":true`)
+
+	var decoded ChannelOtherSettings
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.True(t, decoded.AllowClaudeNativeSampling)
+
+	var legacy ChannelOtherSettings
+	require.NoError(t, json.Unmarshal([]byte(`{"tool_loss_policy":"safe"}`), &legacy))
+	assert.False(t, legacy.AllowClaudeNativeSampling)
+	assert.Equal(t, "safe", legacy.ToolLossPolicy)
+}

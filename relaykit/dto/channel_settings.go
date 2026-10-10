@@ -127,6 +127,13 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// AllowClaudeNativeSampling keeps temperature / top_p / top_k on native
+	// /v1/messages requests instead of clearing them for models whose provider
+	// dropped sampling controls. Leave it unset for upstreams backed by
+	// Anthropic's current API or AWS Bedrock, which reject the request
+	// outright; set it for Claude-compatible proxies that implement their own
+	// sampling rules.
+	AllowClaudeNativeSampling bool `json:"allow_claude_native_sampling,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
