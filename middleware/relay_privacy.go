@@ -27,7 +27,25 @@ type relayPrivacyWriter struct {
 	failed         bool
 	lateMediaError bool
 	jsonWritten    bool
+
+	passthrough    bool
+	passthroughSet bool
 }
+
+// errorPassthrough reports whether upstream errors reach the client unchanged.
+// It is resolved once per response, so flipping the option mid-response cannot
+// produce a half-redacted body.
+func (w *relayPrivacyWriter) errorPassthrough() bool {
+	if !w.passthroughSet {
+		w.passthrough = common.RelayErrorPassthroughFor(w.ctx.GetHeader)
+		w.passthroughSet = true
+	}
+	return w.passthrough
+}
+
+// redactErrors is the inverse of the pass-through switch, named for the
+// sanitizer it feeds.
+func (w *relayPrivacyWriter) redactErrors() bool { return !w.errorPassthrough() }
 
 func (w *relayPrivacyWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
@@ -119,7 +137,7 @@ func (w *relayPrivacyWriter) Write(data []byte) (int, error) {
 				break
 			}
 			frame := w.pending.Next(end + delimiter)
-			if _, err := w.ResponseWriter.Write(common.PublicRelaySSE(frame, w.ctx.GetString(common.RequestIdKey))); err != nil {
+			if _, err := w.ResponseWriter.Write(common.PublicRelaySSE(frame, w.ctx.GetString(common.RequestIdKey), w.redactErrors())); err != nil {
 				return 0, err
 			}
 		}
@@ -147,7 +165,7 @@ func (w *relayPrivacyWriter) finish() {
 		// Upstreams sometimes omit the last blank line. Still filter the tail before
 		// flushing; never flush an incomplete frame in the middle of a stream.
 		if w.pending.Len() > 0 && !w.failed {
-			_, _ = w.ResponseWriter.Write(common.PublicRelaySSE(w.pending.Bytes(), w.ctx.GetString(common.RequestIdKey)))
+			_, _ = w.ResponseWriter.Write(common.PublicRelaySSE(w.pending.Bytes(), w.ctx.GetString(common.RequestIdKey), w.redactErrors()))
 		}
 		return
 	}
@@ -161,15 +179,32 @@ func (w *relayPrivacyWriter) finish() {
 
 func (w *relayPrivacyWriter) writeJSON(body []byte) error {
 	w.jsonWritten = true
+	passthrough := w.errorPassthrough()
 
-	if w.failed || w.mode == "error" || (len(body) > 0 && !gjson.ValidBytes(body)) {
-		body, _ = common.Marshal(gin.H{"error": gin.H{"type": "api_error", "code": "upstream_error", "message": common.MessageWithRequestId("The model request failed. Contact support with the request ID.", w.ctx.GetString(common.RequestIdKey))}})
+	switch {
+	case w.failed:
+		// The privacy buffer overflowed, so the upstream body is gone. Only a
+		// template is possible. This is a gateway fault rather than an upstream
+		// rejection, so it stays opaque even under pass-through.
+		body = w.failureTemplate()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Del("Content-Encoding")
 		if w.Status() < 400 {
 			w.ResponseWriter.WriteHeader(http.StatusBadGateway)
 		}
-	} else {
+	case (w.mode == "error" || (len(body) > 0 && !gjson.ValidBytes(body))) && !passthrough:
+		// A non-JSON or malformed upstream error under the privacy policy.
+		body = w.failureTemplate()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Del("Content-Encoding")
+		if w.Status() < 400 {
+			w.ResponseWriter.WriteHeader(http.StatusBadGateway)
+		}
+	case passthrough:
+		// Hand the upstream document back with gateway provenance removed. The
+		// upstream status and error text are already on the wire untouched.
+		body = common.PassthroughRelayJSON(body)
+	default:
 		redactErrors := w.Status() < 400 || w.Status() >= 500 || w.ctx.GetInt("channel_id") > 0
 		if w.Status() >= 400 && redactErrors {
 			// Do not forward arbitrary sibling diagnostics from upstream errors.
@@ -193,4 +228,11 @@ func (w *relayPrivacyWriter) writeJSON(body []byte) error {
 	w.Header().Set("Content-Length", fmt.Sprint(len(body)))
 	_, err := w.ResponseWriter.Write(body)
 	return err
+}
+
+// failureTemplate is the operator-visible placeholder used whenever the real
+// upstream document cannot or must not be returned.
+func (w *relayPrivacyWriter) failureTemplate() []byte {
+	body, _ := common.Marshal(gin.H{"error": gin.H{"type": "api_error", "code": "upstream_error", "message": common.MessageWithRequestId("The model request failed. Contact support with the request ID.", w.ctx.GetString(common.RequestIdKey))}})
+	return body
 }

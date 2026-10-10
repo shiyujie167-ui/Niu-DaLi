@@ -333,6 +333,18 @@ func IsKnownClaudeModel(model string) bool {
 	return isKnownClaudeModel(model)
 }
 
+// ClaudeRequiresStrictSampling reports whether a model rejects the sampling
+// controls older Claude models accepted. Anthropic only keeps temperature=1.0,
+// top_p>=0.99 and no top_k for these models, and returns 400 for anything else.
+//
+// Request validation uses this to fail such a request at the gateway instead of
+// silently dropping the parameter on the way upstream, which would let a client
+// ship a call that breaks against the real API. Unknown models report false, so
+// an unrecognised alias falls back to the documented 0.0-1.0 ranges.
+func ClaudeRequiresStrictSampling(model string) bool {
+	return claudeCapabilitiesFor(model).strictSampling
+}
+
 func ResolveClaudeDefault(model string, intent Intent) Intent {
 	if intent.HasStrength() || !claudeCapabilitiesFor(model).defaultThinking {
 		return intent

@@ -811,6 +811,8 @@ func TestResponsesWebSocketCancelErrorDoesNotFinishActiveRequest(t *testing.T) {
 }
 
 func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing.T) {
+	withRedactedRelayErrors(t)
+
 	for _, tc := range []struct {
 		name, upstream, wantType, wantMessage string
 		status                                int
@@ -877,9 +879,22 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 	}
 }
 
+// withRedactedRelayErrors pins the privacy policy for tests that assert that
+// upstream diagnostics never reach the client. The shipped default is relay
+// error pass-through (common.RelayErrorPassthrough), so redaction has to be
+// requested explicitly.
+func withRedactedRelayErrors(t *testing.T) {
+	t.Helper()
+	previous := common.RelayErrorPassthrough
+	common.RelayErrorPassthrough = false
+	t.Cleanup(func() { common.RelayErrorPassthrough = previous })
+}
+
 // TEST_RESPONSES_SQL_DSN / TEST_RESPONSES_LOG_SQL_DSN optionally run these
 // entry-point regressions against isolated real MySQL/PostgreSQL databases.
 func TestResponsesStreamOutcomesPreserveAccounting(t *testing.T) {
+	withRedactedRelayErrors(t)
+
 	for _, transport := range []string{"websocket", "http-sse"} {
 		for _, tc := range []struct {
 			name, expression, terminal string
@@ -1095,6 +1110,8 @@ func TestResponsesWebSocketLocalErrorsKeepStreamIdentity(t *testing.T) {
 }
 
 func TestResponsesWebSocketAmbiguousControlErrorClosesAndSettlesOnce(t *testing.T) {
+	withRedactedRelayErrors(t)
+
 	const terminal = `{"type":"error","status":500,"error":{"type":"server_error","code":"server_error","message":"Internal server error"}}`
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
 		if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {
@@ -1257,6 +1274,8 @@ func TestResponsesWebSocketIgnoresLateErrorForPreviousResponse(t *testing.T) {
 // An error that names a different response than the active one is relayed to
 // the client and leaves the active generation running.
 func TestResponsesWebSocketForwardsErrorForOtherResponseWithoutEndingRequest(t *testing.T) {
+	withRedactedRelayErrors(t)
+
 	const strayError = `{"type":"error","response_id":"other","status":500,"error":{"type":"server_error","code":"server_error","message":"unrelated failure"}}`
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(ws *websocket.Conn, _ *http.Request) {
 		if _, _, err := ws.ReadMessage(); !assert.NoError(t, err) {

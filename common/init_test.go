@@ -52,3 +52,36 @@ func TestInitRuntimeBrandDefaults(t *testing.T) {
 		require.Empty(t, Footer)
 	})
 }
+
+// TestRelayResponseHeaderTimeout pins the published non-stream budget. The
+// gateway advertises a 60-minute non-stream timeout, so the default has to stay
+// at one hour rather than the 30 minutes it used to be; a silent regression
+// would truncate long Claude reasoning calls for every client.
+func TestRelayResponseHeaderTimeout(t *testing.T) {
+	require.Equal(t, 3600, DefaultRelayResponseHeaderTimeout)
+
+	t.Run("environment override wins", func(t *testing.T) {
+		t.Setenv("RELAY_RESPONSE_HEADER_TIMEOUT", "120")
+		require.Equal(t, 120, GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", DefaultRelayResponseHeaderTimeout))
+	})
+
+	t.Run("unset environment keeps one hour", func(t *testing.T) {
+		t.Setenv("RELAY_RESPONSE_HEADER_TIMEOUT", "")
+		require.Equal(t, 3600, GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", DefaultRelayResponseHeaderTimeout))
+	})
+
+	t.Run("unparsable environment keeps one hour", func(t *testing.T) {
+		t.Setenv("RELAY_RESPONSE_HEADER_TIMEOUT", "soon")
+		require.Equal(t, 3600, GetEnvOrDefault("RELAY_RESPONSE_HEADER_TIMEOUT", DefaultRelayResponseHeaderTimeout))
+	})
+}
+
+// TestRelayErrorPassthroughDefault pins the shipped default: errors pass
+// through unless an operator turns redaction back on.
+func TestRelayErrorPassthroughDefault(t *testing.T) {
+	require.True(t, RelayErrorPassthrough)
+	t.Run("is overridable from the environment", func(t *testing.T) {
+		t.Setenv("RELAY_ERROR_PASSTHROUGH", "false")
+		require.False(t, GetEnvOrDefaultBool("RELAY_ERROR_PASSTHROUGH", true))
+	})
+}

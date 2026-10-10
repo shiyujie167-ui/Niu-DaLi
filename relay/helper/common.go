@@ -156,7 +156,7 @@ func WssObject(c *gin.Context, ws *websocket.Conn, object any) error {
 		return errors.New("websocket connection is nil")
 	}
 	//common.LogInfo(c, fmt.Sprintf("sending message: %s", jsonData))
-	return ws.WriteMessage(1, common.PublicRelayJSON(jsonData, c.GetString(common.RequestIdKey), true))
+	return ws.WriteMessage(1, common.PublicRelayJSON(jsonData, c.GetString(common.RequestIdKey), !common.RelayErrorPassthroughFor(c.GetHeader)))
 }
 
 func WssError(c *gin.Context, ws *websocket.Conn, openaiError types.OpenAIError) {
