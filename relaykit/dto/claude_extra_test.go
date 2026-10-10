@@ -67,15 +67,22 @@ func TestClaudeRequestWithoutExtraDropsUndeclaredFields(t *testing.T) {
 	require.NoError(t, kitutil.Unmarshal(body, &req))
 	require.Contains(t, req.Extra, "reasoning_effort")
 
-	// Clearing Extra is how the gatekeeper channel setting removes the fields, so
+	// Dropping Extra is how the gatekeeper channel setting removes the fields, so
 	// the encoder must not resurrect them.
-	req.Extra = nil
+	req.DropUndeclaredFields()
 	encoded, err := kitutil.Marshal(req)
 	require.NoError(t, err)
 
 	assert.NotContains(t, string(encoded), "reasoning_effort")
 	assert.JSONEq(t, `{"model":"claude-3-7-sonnet","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`,
 		string(encoded))
+}
+
+// TestDropUndeclaredFieldsIsNilSafe covers the delegating channels, which hand a
+// possibly nil envelope to the shared helper.
+func TestDropUndeclaredFieldsIsNilSafe(t *testing.T) {
+	var req *ClaudeRequest
+	require.NotPanics(t, req.DropUndeclaredFields)
 }
 
 func TestClaudeRequestExtraCannotShadowDeclaredFields(t *testing.T) {

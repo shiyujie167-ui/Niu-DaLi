@@ -214,14 +214,26 @@ const statusCodeOverloaded = 529
 
 // claudeErrorType reports the Anthropic error type for an upstream error that
 // arrived in OpenAI shape. Anthropic clients branch on this value, so it must
-// always be populated and must always name a type the client can act on: an
-// explicit upstream code is kept, and everything else is mapped from the HTTP
-// status the client actually received. The status is the signal that is present
-// even when an upstream, such as one sitting in front of Bedrock, sends an error
-// body with no classification of its own.
+// always be populated and must always name a type the client can act on: a code
+// that is a string is kept, and everything else is mapped from the HTTP status
+// the client actually received.
+//
+// Both spellings of a string code are accepted. An error rebuilt in this process
+// (NewOpenAIError, InitOpenAIError) carries an ErrorCode, while one parsed from
+// an upstream body carries a plain string; a numeric code is a status, not a
+// type, so it is deliberately not used here. The status is the signal that is
+// present even when an upstream, such as one sitting in front of Bedrock, sends
+// an error body with no classification of its own.
 func claudeErrorType(openAIError OpenAIError, statusCode int) string {
-	if code, ok := openAIError.Code.(string); ok && code != "" {
-		return code
+	switch code := openAIError.Code.(type) {
+	case string:
+		if code != "" {
+			return code
+		}
+	case ErrorCode:
+		if code != "" {
+			return string(code)
+		}
 	}
 	return protocolErrorType(statusCode)
 }

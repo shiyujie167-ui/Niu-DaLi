@@ -29,6 +29,9 @@ func TestToClaudeErrorAlwaysNamesAType(t *testing.T) {
 		{"an upstream overload", statusCodeOverloaded, nil, "overloaded_error"},
 		{"an upstream fault", http.StatusBadGateway, nil, "api_error"},
 		{"an explicit string code", http.StatusBadRequest, "invalid_request", "invalid_request"},
+		{"an explicit ErrorCode", http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid_request"},
+		{"an empty string code falls back to the status", http.StatusForbidden, "", "permission_error"},
+		{"an empty ErrorCode falls back to the status", http.StatusForbidden, ErrorCode(""), "permission_error"},
 		{"a numeric code is not a type", http.StatusNotFound, 404, "not_found_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,6 +44,17 @@ func TestToClaudeErrorAlwaysNamesAType(t *testing.T) {
 			require.NotEmpty(t, got.Type)
 		})
 	}
+}
+
+// TestClaudeErrorTypeKeepsACodeThisProcessAssigned covers the codes that are not
+// plain strings. An error rebuilt locally through NewOpenAIError carries an
+// ErrorCode; dropping it here would silently replace the gateway's own
+// classification with one derived from a status that never described it.
+func TestClaudeErrorTypeKeepsACodeThisProcessAssigned(t *testing.T) {
+	rebuilt := NewOpenAIError(errors.New("upstream said no"), ErrorCodeInvalidRequest, http.StatusInternalServerError)
+
+	require.Equal(t, "invalid_request", rebuilt.ToClaudeError().Type)
+	require.Equal(t, "invalid_request", rebuilt.ToOpenAIError().Type)
 }
 
 // TestErrorEnvelopeTypesSurviveDirectConstruction covers envelopes that are not

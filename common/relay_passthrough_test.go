@@ -126,6 +126,28 @@ func TestScrubUpstreamDiagnostics(t *testing.T) {
 			want:  upstreamAccountFailureMessage,
 		},
 		{
+			name:  "a balance stated amount-first is replaced",
+			input: "The upstream rejected the request for $3 in balance",
+			want:  upstreamAccountFailureMessage,
+		},
+		{
+			name:  "every exception class is unwrapped, not just the well known ones",
+			input: "ServiceQuotaExceededException: too many tokens",
+			want:  "too many tokens",
+		},
+		{
+			// A schema error may quote an amount of its own. Replacing it would hide
+			// the caller's actual mistake behind an unrelated billing message.
+			name:  "a validation error that mentions an amount is kept",
+			input: "messages.1: invalid value '$5' for field billing_address",
+			want:  "messages.1: invalid value '$5' for field billing_address",
+		},
+		{
+			name:  "a parameter error that names a credit field is kept",
+			input: "credit_balance is not a supported parameter for this model",
+			want:  "credit_balance is not a supported parameter for this model",
+		},
+		{
 			name:  "a bare service hostname is removed",
 			input: "bedrock-runtime.us-east-1.amazonaws.com timed out",
 			want:  "timed out",
@@ -178,6 +200,68 @@ func TestRelayJSONHidesUpstreamIdentityWhenNothingElseRemains(t *testing.T) {
 	account := []byte(`{"error":{"type":"permission_error","message":"预扣费额度失败, 用户剩余额度: ＄78.481940 (request id: up-hop)"}}`)
 	require.Equal(t, upstreamAccountFailureMessage+" (request id: local-request)",
 		gjson.GetBytes(PassthroughRelayJSON(account, "local-request"), "error.message").String())
+}
+
+// TestRelayJSONScrubsFlatErrorEvents covers the shape that carries a failure
+// without an `error` object: OpenAI Responses and its SSE form put `type` and
+// `message` side by side, so a sanitizer that only walks `error.message` leaves
+// that path open under the default pass-through policy.
+func TestRelayJSONScrubsFlatErrorEvents(t *testing.T) {
+	flat := []byte(`{"type":"error","code":"server_error","message":"InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400, RequestID: 39f63b08-3af3-46d5-9929-1446ccffd920, ValidationException: bad (request id: hop-a)"}`)
+
+	clean := PassthroughRelayJSON(flat, "local-request")
+
+	require.Equal(t, "bad (request id: local-request)", gjson.GetBytes(clean, "message").String())
+	require.Equal(t, "server_error", gjson.GetBytes(clean, "code").String())
+	require.NotContains(t, string(clean), "Bedrock Runtime")
+	require.NotContains(t, string(clean), "39f63b08")
+
+	// A success frame of the same shape has an object at `message` and must not be
+	// treated as a failure: its id is normalized as usual, but nothing else about
+	// it is rewritten.
+	start := []byte(`{"type":"message_start","message":{"id":"msg_bdrk_stream","usage":{"input_tokens":1}}}`)
+	startClean := PassthroughRelayJSON(start, "local-request")
+	require.Equal(t, "msg_stream", gjson.GetBytes(startClean, "message.id").String())
+	require.Equal(t, "1", gjson.GetBytes(startClean, "message.usage.input_tokens").String())
+
+	// A frame whose type merely mentions a completed response keeps its message
+	// text: only an error frame carries a failure there.
+	done := []byte(`{"type":"response.completed","message":"all done"}`)
+	require.Equal(t, "all done", gjson.GetBytes(PassthroughRelayJSON(done, "local-request"), "message").String())
+}
+
+// TestRelayJSONKeepsProtocolDetailsField guards against over-deletion: Google
+// shaped envelopes define error.details, so it is protocol content rather than an
+// upstream side-channel.
+func TestRelayJSONKeepsProtocolDetailsField(t *testing.T) {
+	body := []byte(`{"error":{"type":"invalid_request_error","message":"bad argument","details":[{"@type":"type.googleapis.com/google.rpc.BadRequest","fieldViolations":[{"field":"temperature"}]}],"metadata":{"provider":"private-provider"}}}`)
+
+	clean := PassthroughRelayJSON(body, "local-request")
+
+	require.True(t, gjson.GetBytes(clean, "error.details").Exists(), "details is protocol content")
+	require.Equal(t, "temperature", gjson.GetBytes(clean, "error.details.0.fieldViolations.0.field").String())
+	require.False(t, gjson.GetBytes(clean, "error.metadata").Exists())
+	require.NotContains(t, string(clean), "private-provider")
+}
+
+// TestRelayJSONDropsFoldedUpstreamMetadata covers the second copy of the same
+// text. Rebuilding an upstream error through WithOpenAIError folds its metadata
+// into the message as a trailing parenthetical, so removing the field is not
+// enough on its own.
+func TestRelayJSONDropsFoldedUpstreamMetadata(t *testing.T) {
+	original := []byte(`{"error":{"type":"invalid_request_error","message":"upstream said no ({\"provider\":\"private-provider\"})","metadata":{"provider":"private-provider"}}}`)
+
+	clean := PassthroughRelayJSON(original, "local-request")
+
+	require.Equal(t, "upstream said no (request id: local-request)", gjson.GetBytes(clean, "error.message").String())
+	require.False(t, gjson.GetBytes(clean, "error.metadata").Exists())
+	require.NotContains(t, string(clean), "private-provider")
+
+	// A message that merely ends in a parenthetical of its own is not touched:
+	// only the exact text this gateway appended is removed.
+	plain := []byte(`{"error":{"type":"invalid_request_error","message":"bad request (see the docs)","metadata":{"provider":"private-provider"}}}`)
+	require.Equal(t, "bad request (see the docs) (request id: local-request)",
+		gjson.GetBytes(PassthroughRelayJSON(plain, "local-request"), "error.message").String())
 }
 
 // TestPublicRelayJSONHidesNestedResponseId covers the formats that nest the

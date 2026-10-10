@@ -74,46 +74,50 @@ func NormalizeUpstreamResponseId(id string) string {
 // upstreamDiagnosticPatterns name the upstream's inference backend, its cloud
 // account or a hop in its proxy chain. They are stripped from client-visible
 // failure text: the caller keeps the upstream's diagnosis, never its identity.
-//
-// Order matters. The SDK wrapper is unwrapped first, because the cloud request
-// id and the exception class name it carries only become reachable once it is
-// gone.
 var upstreamDiagnosticPatterns = []*regexp.Regexp{
 	// The AWS SDK v2 "operation error" wrapper as an upstream body spells it:
 	// InvokeModel: operation error Bedrock Runtime: InvokeModel, https response error StatusCode: 400,
 	regexp.MustCompile(`(?:[A-Za-z0-9]+: )?operation error [^,]+: [^,]+, ?https response error StatusCode: \d+,?\s*`),
 	// The cloud-side request id, which correlates with the upstream's own cloud account.
 	regexp.MustCompile(`\bRequestID:\s*[0-9a-fA-F][0-9a-fA-F-]{6,}\s*,?\s*`),
-	// Cloud exception classes: the service names itself in the class name, and
-	// the schema error that follows is the part a caller can act on.
-	regexp.MustCompile(`\b(?:Validation|AccessDenied|Throttling|ModelNotReady|ModelStream|ModelTimeout|InternalServer|ServiceQuota|ResourceNotFound|Serialization|Deserialization)Exception:\s*`),
+	// Cloud SDK exception classes. Every one of them ends in "Exception" and the
+	// class name carries the service, so the whole token goes; the schema error
+	// that follows is the part a caller can act on.
+	regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9]*Exception:\s*`),
 	// Bare service hostnames, for the case where one appears outside the wrapper.
 	regexp.MustCompile(`\b[a-z0-9][a-z0-9.-]*amazonaws\.com[a-z0-9./_-]*`),
 	// Every hop of a relay chain decorates the same message with its own id. The
-	// gateway republics exactly one id, its own, after this runs.
+	// gateway republishes exactly one id, its own, after this runs.
 	regexp.MustCompile(`(?:\s*\(request id: [^()]*\))+`),
 }
 
-// moneyAmount and upstreamAccountWords together identify failure text that
-// describes the upstream's own account rather than the caller's request: an
-// amount of money sitting next to a balance concept. Publishing it would hand
-// every downstream client the upstream's pricing and its payer's balance.
-var (
-	moneyAmount          = regexp.MustCompile(`[＄$￥€£]\s?\d`)
-	upstreamAccountWords = []string{"额度", "余额", "预扣", "quota", "balance", "credit", "billing"}
-)
+// upstreamBalanceDiagnostics recognises failure text that describes the
+// upstream's own account rather than the caller's request.
+//
+// A balance the upstream reports about itself always pairs an amount with a
+// balance word, in one of two orders: "用户剩余额度: ＄78.48", "balance: $12.00",
+// "$3 in balance". Requiring that *pair* is what keeps an actionable schema
+// error — which may legitimately quote a currency amount of its own, as in
+// "invalid value '$5' for field billing_address" — from being replaced by a
+// message that hides the caller's actual mistake.
+//
+// This is a heuristic on free text, so it is deliberately conservative: a
+// balance stated with no amount, or with an unrecognised currency, is left as
+// the upstream wrote it rather than guessed at.
+var upstreamBalanceDiagnostics = []*regexp.Regexp{
+	// "额度: ＄78.48", "balance: $12.00", "quota is $5"
+	regexp.MustCompile(`(?:余额|额度|预扣|quota|balance)[^;,\n]{0,12}?[＄$￥¥€£]\s?\d`),
+	// "$78.48 remaining balance", "$3 in balance"
+	regexp.MustCompile(`[＄$￥¥€£]\s?\d[\d.,]*[^;,\n]{0,12}?(?:余额|额度|quota|balance)`),
+}
 
 // upstreamAccountFailureMessage replaces an account diagnostic. The condition
 // is real and worth reporting; the amounts and the balances are not.
 const upstreamAccountFailureMessage = "This request cannot be funded. Contact support with the request ID."
 
 func isUpstreamAccountDiagnostic(message string) bool {
-	if !moneyAmount.MatchString(message) {
-		return false
-	}
-	lowered := strings.ToLower(message)
-	for _, keyword := range upstreamAccountWords {
-		if strings.Contains(lowered, keyword) {
+	for _, pattern := range upstreamBalanceDiagnostics {
+		if pattern.MatchString(message) {
 			return true
 		}
 	}
@@ -167,6 +171,35 @@ func PassthroughRelayJSON(data []byte, requestID string) []byte {
 	return publicRelayJSON(data, requestID, false, false)
 }
 
+// scrubMessageAt rewrites one client-visible failure message. folded is the raw
+// metadata this gateway appended to it, or "" when there is none to remove.
+func scrubMessageAt(data []byte, path, folded, requestID string) []byte {
+	message := gjson.GetBytes(data, path)
+	if message.Type != gjson.String {
+		return data
+	}
+	text := message.String()
+	if folded != "" {
+		// Only ever removes the exact text this gateway appended; a message that
+		// does not end with it is returned untouched.
+		text = strings.TrimSuffix(text, " ("+folded+")")
+	}
+	scrubbed := ScrubUpstreamDiagnostics(text)
+	if scrubbed == "" {
+		// The whole message was upstream identity; fall back to the operator
+		// template rather than publishing an empty or id-only message.
+		scrubbed = PublicRelayFailureMessage("")
+	}
+	decorated := MessageWithRequestId(scrubbed, requestID)
+	if decorated == message.String() {
+		return data
+	}
+	if clean, err := sjson.SetBytes(data, path, decorated); err == nil {
+		return clean
+	}
+	return data
+}
+
 // scrubUpstreamIdentity removes upstream vendor fingerprints from the only two
 // client-visible places on a relayed body that can carry them: protocol
 // response ids and failure text.
@@ -191,10 +224,17 @@ func scrubUpstreamIdentity(data []byte, prefixes []string, requestID string) []b
 
 	for _, prefix := range []string{"", "response.", "message."} {
 		errorPath := prefix + "error"
-		// Diagnostics also ride along as siblings of the error object. These are
-		// opaque upstream side-channels with no protocol meaning on any of the
-		// supported formats, so they are dropped under every error policy.
-		for _, field := range []string{"metadata", "debug", "details"} {
+		// `metadata` and `debug` are upstream side-channels with no protocol
+		// meaning on any supported format, so they go under every error policy.
+		// `details` deliberately stays: Google-shaped envelopes define it
+		// (fieldViolations), so removing it would delete protocol content. The
+		// redaction policy drops it as part of discarding the error body anyway.
+		//
+		// The metadata text can be present a second time inside the message:
+		// rebuilding an upstream error through WithOpenAIError folds it in as a
+		// trailing parenthetical, so dropping the field alone leaves a copy.
+		folded := gjson.GetBytes(data, errorPath+".metadata")
+		for _, field := range []string{"metadata", "debug"} {
 			if !gjson.GetBytes(data, errorPath+"."+field).Exists() {
 				continue
 			}
@@ -202,24 +242,21 @@ func scrubUpstreamIdentity(data []byte, prefixes []string, requestID string) []b
 				data = clean
 			}
 		}
+		data = scrubMessageAt(data, errorPath+".message", folded.Raw, requestID)
+	}
 
-		message := gjson.GetBytes(data, errorPath+".message")
-		if message.Type != gjson.String {
+	// OpenAI Responses and its SSE form report a failure flat: `type` and
+	// `message` sit beside each other with no `error` object, so the pass above
+	// never reaches them. A success frame of the same shape carries an object at
+	// `message`, which the string check rejects.
+	for _, prefix := range []string{"", "response."} {
+		if !strings.Contains(gjson.GetBytes(data, prefix+"type").String(), "error") {
 			continue
 		}
-		scrubbed := ScrubUpstreamDiagnostics(message.String())
-		if scrubbed == "" {
-			// The whole message was upstream identity; fall back to the operator
-			// template rather than publishing an empty or id-only message.
-			scrubbed = PublicRelayFailureMessage("")
-		}
-		decorated := MessageWithRequestId(scrubbed, requestID)
-		if decorated == message.String() {
+		if gjson.GetBytes(data, prefix+"error").Exists() {
 			continue
 		}
-		if clean, err := sjson.SetBytes(data, errorPath+".message", decorated); err == nil {
-			data = clean
-		}
+		data = scrubMessageAt(data, prefix+"message", "", requestID)
 	}
 	return data
 }

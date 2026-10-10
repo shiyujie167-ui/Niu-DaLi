@@ -266,6 +266,19 @@ type ClaudeRequest struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
+// DropUndeclaredFields removes the top-level fields this envelope does not
+// declare, so they cannot reach an upstream.
+//
+// Every channel that writes a Claude envelope has to call this unless the
+// channel opted in. It exists as one method rather than as an assignment at each
+// call site because a channel may forward the client's envelope verbatim without
+// going through ConvertClaudeRequest on the claude adaptor at all.
+func (r *ClaudeRequest) DropUndeclaredFields() {
+	if r != nil {
+		r.Extra = nil
+	}
+}
+
 // claudeRequestFields is the set of top-level names this envelope declares. It is
 // derived from the struct tags once so Extra cannot drift from the definition.
 var claudeRequestFields = sync.OnceValue(func() map[string]struct{} {
