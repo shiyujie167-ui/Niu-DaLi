@@ -254,13 +254,26 @@ func PublicRelaySSE(frame []byte, requestID string, redactErrors bool) []byte {
 	return out.Bytes()
 }
 
+// relayProtocolHeaderFamilies lists header families whose names carry a
+// variable suffix and therefore cannot be enumerated as exact names. Anthropic
+// reports per-window rate limits this way, and those numbers decide whether a
+// client should back off, so they are protocol-visible. None of them carry
+// credentials or upstream topology.
+var relayProtocolHeaderFamilies = []string{"Anthropic-Ratelimit-"}
+
 // RelayProtocolHeader is an allowlist, so new infrastructure fingerprint headers
 // cannot accidentally become public. Gateway-owned CORS/security/request headers
 // are applied separately; an upstream must not overwrite them.
 func RelayProtocolHeader(name string) bool {
-	switch http.CanonicalHeaderKey(name) {
+	canonical := http.CanonicalHeaderKey(name)
+	switch canonical {
 	case "Content-Type", "Content-Disposition", "Content-Encoding", "Cache-Control", "Expires", "Last-Modified", "Etag", "Retry-After", "Content-Range", "Accept-Ranges", "X-Accel-Buffering", "X-Reasoning-Included", "X-Codex-Turn-State":
 		return true
+	}
+	for _, family := range relayProtocolHeaderFamilies {
+		if strings.HasPrefix(canonical, family) {
+			return true
+		}
 	}
 	return false
 }
