@@ -1,11 +1,20 @@
 // Wire contract: docs/88api-seedance-video-guide.md, verified 2026-10-11.
 // Prices are administrator-owned; duration is a requested usage quantity.
 const MODELS = {
-  "seedance-2.5官方版": { maxSeconds: 30, seconds: 4, maxImages: 30, resolutions: ["720p"], resolution: "720p" },
-  "seedance-2.0官方版": { maxSeconds: 15, seconds: 4, maxImages: 9, resolutions: ["720p"], resolution: "720p" },
-  "seedance-2.0-fast官方版": { maxSeconds: 15, seconds: 4, maxImages: 9, resolutions: ["720p"], resolution: "720p" },
-  "seedance-2.0-mini官方版": { maxSeconds: 15, seconds: 5, maxImages: 9, resolutions: ["480p", "720p"], resolution: "480p", noFrames: true },
+  "seedance-2.5官方版": { maxSeconds: 30, seconds: 4, maxImages: 30, maxVideos: 10, maxAudios: 10, resolutions: ["720p"], resolution: "720p" },
+  "seedance-2.0官方版": { maxSeconds: 15, seconds: 4, maxImages: 9, maxVideos: 3, maxAudios: 3, resolutions: ["720p"], resolution: "720p" },
+  "seedance-2.0-fast官方版": { maxSeconds: 15, seconds: 4, maxImages: 9, maxVideos: 3, maxAudios: 3, resolutions: ["720p"], resolution: "720p" },
+  "seedance-2.0-mini官方版": { maxSeconds: 15, seconds: 5, maxImages: 9, maxVideos: 3, maxAudios: 3, resolutions: ["480p", "720p"], resolution: "480p", noFrames: true },
 };
+MODELS["SD2.5"] = { maxSeconds: 30, seconds: 5, maxImages: 30, maxVideos: 10, maxAudios: 10, resolutions: ["480p", "720p", "1080p"], resolution: "480p", audio: true };
+MODELS["SD2.0"] = { maxSeconds: 15, seconds: 5, maxImages: 9, maxVideos: 3, maxAudios: 3, maxMedia: 12, resolutions: ["480p", "720p", "1080p", "4k"], resolution: "480p" };
+// Documented legacy fixed-tier IDs remain distinct routing/billing identities.
+for (const model of ["SD2.0", "SD2.5"]) {
+  for (const resolution of MODELS[model].resolutions) {
+    const suffix = resolution.toUpperCase();
+    MODELS[model + " " + suffix] = { ...MODELS[model], resolutions: [resolution], resolution };
+  }
+}
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 const SECONDS_USAGE = { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } };
 const RESOLUTION_DESCRIPTION = { en: "Output video resolution", zh: "输出视频分辨率" };
@@ -15,9 +24,9 @@ export const meta = {
   key: "88api-seedance",
   name: "88API Seedance",
   icon: "text:88",
-  version: "1.0.0",
+  version: "1.1.0",
   author: { name: "Niu Dali" },
-  description: { en: "88API official Seedance text and image video generation", zh: "88API Seedance 官方版文字及图片视频生成" },
+  description: { en: "88API Seedance and SD cloud multimodal video generation", zh: "88API Seedance 官方版与 SD 云厂商版多素材视频生成" },
   baseUrl: "https://api.88api.ai",
   auth: "api_key",
   upstreams: ["vendor", "new_api"],
@@ -28,10 +37,10 @@ export const meta = {
     seconds: SECONDS_USAGE,
     resolution: { enum: ["720p"], description: RESOLUTION_DESCRIPTION },
   },
-  usageProfiles: [{
-    models: ["seedance-2.0-mini官方版"],
-    schema: { seconds: SECONDS_USAGE, resolution: { enum: ["480p", "720p"], description: RESOLUTION_DESCRIPTION } },
-  }],
+  usageProfiles: Object.entries(MODELS).filter(([, config]) => config.resolutions.length !== 1 || config.resolution !== "720p").map(([model, config]) => ({
+    models: [model],
+    schema: { seconds: SECONDS_USAGE, resolution: { enum: config.resolutions, description: RESOLUTION_DESCRIPTION } },
+  })),
 };
 
 function modelConfig(model) {
@@ -59,11 +68,11 @@ function imageFiles(files) {
 function videoRequest(req, model, files) {
   const config = modelConfig(model);
   if (!req || typeof req !== "object" || Array.isArray(req)) throw new Error("Request must be an object");
-  const allowed = ["model", "prompt", "duration", "seconds", "resolution", "ratio", "size", "images", "metadata", "negative_prompt", "seed"];
+  const allowed = ["model", "prompt", "duration", "seconds", "resolution", "ratio", "size", "images", "metadata", "negative_prompt", "seed", "generate_audio"];
   for (const key of Object.keys(req)) {
     if (!allowed.includes(key)) throw new Error("Unsupported parameter: " + key);
   }
-  if (typeof req.prompt !== "string" || !req.prompt.trim()) throw new Error("prompt is required");
+  if (req.prompt !== undefined && typeof req.prompt !== "string") throw new Error("prompt must be a string");
   if (req.duration !== undefined && req.seconds !== undefined) throw new Error("Use duration or seconds, not both");
   let duration = config.seconds;
   if (req.duration !== undefined) {
@@ -82,7 +91,7 @@ function videoRequest(req, model, files) {
   const ratio = req.ratio === undefined ? (req.size === undefined ? "16:9" : req.size) : req.ratio;
   if (!RATIOS.includes(ratio)) throw new Error("Unsupported ratio");
   const uploaded = imageFiles(files || []);
-  const body = { model, prompt: req.prompt.trim(), duration, resolution, ratio };
+  const body = { model, prompt: (req.prompt || "").trim(), duration, resolution, ratio };
   if (req.images !== undefined) {
     if (!Array.isArray(req.images) || req.images.length > config.maxImages || req.images.some(url => !mediaURL(url))) throw new Error("images must contain at most " + config.maxImages + " HTTP(S) URLs");
     if (uploaded.length) throw new Error("Use images or input_reference, not both");
@@ -92,18 +101,36 @@ function videoRequest(req, model, files) {
     const metadata = req.metadata;
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw new Error("metadata must be an object");
     for (const key of Object.keys(metadata)) {
-      if (!["firstFrame", "lastFrame"].includes(key)) throw new Error("Unsupported metadata parameter: " + key);
+      if (!["firstFrame", "lastFrame", "referenceVideos", "referenceAudios"].includes(key)) throw new Error("Unsupported metadata parameter: " + key);
     }
+    const references = {};
+    for (const [key, maximum] of [["referenceVideos", config.maxVideos], ["referenceAudios", config.maxAudios]]) {
+      if (metadata[key] === undefined) continue;
+      const values = metadata[key];
+      if (!Array.isArray(values) || values.length > maximum || values.some(url => !mediaURL(url) || !url.startsWith("https://"))) throw new Error(key + " must contain at most " + maximum + " HTTPS URLs");
+      references[key] = values.slice();
+    }
+    if (Object.keys(references).length) body.metadata = references;
     const hasFirst = metadata.firstFrame !== undefined;
     const hasLast = metadata.lastFrame !== undefined;
     if (hasLast && !hasFirst) throw new Error("lastFrame requires firstFrame");
     if (hasFirst && !mediaURL(metadata.firstFrame) || hasLast && !mediaURL(metadata.lastFrame)) throw new Error("Frame images must be HTTP(S) URLs");
     if (hasFirst || hasLast) {
       if (config.noFrames) throw new Error("Frame mode is not confirmed for the mini model");
-      if (uploaded.length || req.images !== undefined) throw new Error("Frame mode cannot be mixed with reference images");
+      if (uploaded.length || req.images !== undefined || Object.values(references).some(values => values.length)) throw new Error("Frame mode cannot be mixed with reference images, videos or audios");
       body.metadata = { firstFrame: metadata.firstFrame };
       if (hasLast) body.metadata.lastFrame = metadata.lastFrame;
     }
+  }
+  const mediaCount = uploaded.length + (body.images || []).length + ((body.metadata || {}).referenceVideos || []).length + ((body.metadata || {}).referenceAudios || []).length;
+  if (config.maxMedia && mediaCount > config.maxMedia) throw new Error("This model accepts at most " + config.maxMedia + " reference media items in total");
+  if (!body.prompt) {
+    if (!mediaCount && !(body.metadata && body.metadata.firstFrame)) throw new Error("prompt is required");
+    body.prompt = "保持参考素材中的主体外观和风格，生成自然连贯的动作与镜头";
+  }
+  if (req.generate_audio !== undefined) {
+    if (!config.audio || typeof req.generate_audio !== "boolean") throw new Error("generate_audio is unsupported for this model or must be a boolean");
+    body.generate_audio = req.generate_audio;
   }
   if (req.negative_prompt !== undefined) {
     if (typeof req.negative_prompt !== "string") throw new Error("negative_prompt must be a string");
@@ -227,6 +254,9 @@ export const protocols = {
           let value = values[0];
           if (["metadata", "images"].includes(key)) {
             try { value = JSON.parse(value); } catch (e) { throw new Error(key + " must contain valid JSON", { cause: e }); }
+          } else if (key === "generate_audio") {
+            if (!["true", "false"].includes(value)) throw new Error("generate_audio must be a boolean");
+            value = value === "true";
           } else if (["duration", "seed"].includes(key)) {
             if (!/^-?[0-9]+$/.test(value)) throw new Error(key + " must be an integer");
             value = Number(value);

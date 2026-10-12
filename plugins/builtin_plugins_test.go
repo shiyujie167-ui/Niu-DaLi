@@ -718,3 +718,33 @@ func TestBuiltInPluginsAddressNewAPIUpstreamOnNativeRoutes(t *testing.T) {
 		}
 	})
 }
+
+func TestSeedance88ExtendedInputs(t *testing.T) {
+	plugin := loadSeedance88Plugin(t)
+	for _, model := range []string{"seedance-2.5官方版", "seedance-2.0官方版", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "SD2.0", "SD2.5"} {
+		t.Run(model, func(t *testing.T) {
+			body := map[string]any{"model": model, "images": []any{"https://images.example/a.png", "https://images.example/b.png"}, "metadata": map[string]any{"referenceVideos": []any{"https://media.example/v.mp4"}, "referenceAudios": []any{"https://media.example/a.wav"}}}
+			decoded, err := decodeSeedance88Request(t, plugin, model, map[string]any{"kind": "json", "value": body})
+			require.NoError(t, err)
+			request := decoded["requestBody"].(map[string]any)
+			assert.NotEmpty(t, request["prompt"])
+			assert.Equal(t, body["metadata"], request["metadata"])
+			assert.Equal(t, "image_to_video", decoded["action"])
+		})
+	}
+	for _, model := range []string{"SD2.0", "SD2.5"} {
+		for _, resolution := range []string{"480p", "720p", "1080p"} {
+			body := map[string]any{"model": model, "prompt": "walk", "resolution": resolution}
+			_, err := decodeSeedance88Request(t, plugin, model, map[string]any{"kind": "json", "value": body})
+			require.NoError(t, err)
+		}
+	}
+	for _, metadata := range []map[string]any{
+		{"firstFrame": "https://images.example/a.png", "referenceVideos": []any{"https://media.example/v.mp4"}},
+		{"referenceAudios": []any{"data:audio/wav;base64,AA=="}},
+		{"referenceVideos": []any{"https://a.example/1", "https://a.example/2", "https://a.example/3", "https://a.example/4"}},
+	} {
+		_, err := decodeSeedance88Request(t, plugin, "seedance-2.0官方版", map[string]any{"kind": "json", "value": map[string]any{"prompt": "walk", "metadata": metadata}})
+		require.Error(t, err)
+	}
+}
