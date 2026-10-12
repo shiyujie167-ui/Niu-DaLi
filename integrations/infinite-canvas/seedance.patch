@@ -1,0 +1,642 @@
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -89,6 +89,8 @@
+ 
+ ## 项目注意事项
+ 
++- 修复外部模型接入时，必须核对用户当前页面的渠道地址、模型和实际请求路径；直连供应商与经网关调用要分别验证，不能只测试新增但用户未使用的渠道。部署后核对该标签页实际加载的构建资源，旧报错不得当作新请求结果。
++
+ - 新增或调整超时、重试次数、大小限制、并发上限等会改变实际行为的边界值前，必须先向用户说明适用环节、默认值和失败后的处理方式，并取得确认；不要把经验值当成纯内部实现静默加入。
+ - 当前画布项目和“我的素材”主要保存在浏览器本地，不要在文档中误写成已支持云同步。
+ - 当前 AI API Key 存在浏览器本地，并由前端直接请求 OpenAI 兼容接口；涉及安全说明时要写清楚。
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,6 +1,10 @@
+ # CHANGELOG
+ 
+ ## Unreleased
++
+++ [修复] 直连 88API 官方地址自动启用多素材 URL 提交，保留多图顺序和用户提示词，避免落入通用单文件上传。
++
+++ [新增] 88API Seedance／SD 视频内置接入支持无提示词素材生成、多图、首尾帧和参考音视频，按模型限制分辨率、时长及素材数量，并复用任务 ID 查询。
+ 
+ ## v0.19.0 - 2026-09-16
+ 
+--- a/docs/content/docs/progress/pending-test.mdx
++++ b/docs/content/docs/progress/pending-test.mdx
+@@ -4,6 +4,16 @@
+ ---
+ 
+ # Pending Tests
++
++## 88API Seedance 多素材接入
++
++- 直连 `https://api.88api.ai`（或 `/v1`）自动启用内置多素材请求；不依赖网关接入开关。每张参考图先申请上传、完成 PUT，最终生成只发送有序 `images` URL 数组和原始提示词，不设置首尾帧。直连上传凭证请求省略网关专属 `model` 字段。当前真实上游生成仍待验收。
++
++- 已实现内置请求：只连素材时补默认提示词；参考图、视频和音频先经网关申请专用上传凭证，上传完成才创建任务；首尾帧按图片连接顺序使用第一、第二张，禁止与普通参考素材混用。
++- 模型识别包括 Seedance 2.5／2.0／fast／mini 官方版与 SD2.0／SD2.5 云厂商版、文档中的 SD 固定档位旧名称。官方版分辨率不扩大；480p／1080p 按实际模型能力开放。mini 禁用首尾帧。
++- 渠道编辑新增“视频接入方式”，需选择“88API Seedance／SD（通过我们的网关）”；其它渠道的同名模型保持原请求。自定义脚本仍优先；从旧手册迁移时需清空单图脚本并保存渠道。正常内置路径返回公共任务 ID，沿用画布现有持久化与状态查询；已取得 ID 的任务不以重新 POST 代替查询。
++- 待真实验收：配好运行新插件及上传接口的网关、对应模型渠道／用户 Key 后，逐项验证图片、音视频素材真实上传、首尾帧顺序和最终视频播放；核对模型权限、实际费用及失败退款。离线契约测试通过不等于上游生成成功。
++- 当前分组及管理员价格不自动修改；原有画布、渠道、脚本和凭据不自动覆盖。
+ 
+ The current release needs manual verification in these areas:
+ 
+--- a/web/src/components/canvas/canvas-node-prompt-panel.tsx
++++ b/web/src/components/canvas/canvas-node-prompt-panel.tsx
+@@ -1,10 +1,11 @@
++import { getSeedanceCapabilities, usesSeedanceAdapter } from "@/lib/seedance-capabilities";
+ import { useEffect, useState } from "react";
+ import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
+ import { Button, Modal, Tooltip } from "antd";
+ import { useTranslation } from "react-i18next";
+ 
+ import { ModelPicker } from "@/components/model-picker";
+-import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
++import { defaultConfig, modelOptionName, resolveModelForCapability, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+ import { canvasThemes } from "@/lib/canvas-theme";
+ import { useThemeStore } from "@/stores/use-theme-store";
+ import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
+@@ -60,9 +61,11 @@
+         else onPromptChange(node.id, value);
+     };
+ 
++    const hasSeedanceMedia = mode === "video" && usesSeedanceAdapter(resolveModelRequestConfig(config, config.model)) && Boolean(getSeedanceCapabilities(modelOptionName(config.model || config.videoModel))) && connectedNodes.some(item => [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].some(type => type === item.type) && Boolean(item.metadata?.content));
++    const canSubmit = Boolean(prompt.trim()) || hasSeedanceMedia;
+     const submit = () => {
+         const text = prompt.trim();
+-        if (!text || isRunning) return;
++        if (!canSubmit || isRunning) return;
+         onGenerate(node.id, mode, text);
+     };
+ 
+@@ -129,7 +132,7 @@
+                     type="primary"
+                     className="!h-10 !min-w-16 shrink-0 !rounded-full !px-3"
+                     danger={isRunning}
+-                    disabled={!isRunning && !prompt.trim()}
++                    disabled={!isRunning && !canSubmit}
+                     onClick={() => (isRunning ? onStop(node.id) : submit())}
+                     aria-label={t(isRunning ? "canvas.promptPanel.stopGeneration" : "canvas.promptPanel.generate")}
+                 >
+--- a/web/src/components/layout/channel-editor-drawer.tsx
++++ b/web/src/components/layout/channel-editor-drawer.tsx
+@@ -1,3 +1,4 @@
++import { isDirect88Api } from "@/lib/seedance-capabilities";
+ import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
+ import { ListPlus, Trash2 } from "lucide-react";
+ import { useEffect, useState } from "react";
+@@ -77,6 +78,11 @@
+                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
+                     <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
+                 </label>
++                {draft.apiFormat === "openai" ? <label className="block md:col-span-2">
++                    <span className="mb-1 block text-sm font-medium">视频接入方式</span>
++                    <Select aria-label="视频接入方式" className="w-full" value={isDirect88Api(draft.baseUrl) ? "direct88api" : draft.videoAdapter || "standard"} options={[...(isDirect88Api(draft.baseUrl) ? [{label:"88API 直连（自动多素材上传）",value:"direct88api"}] : []), {label:"通用 OpenAI 视频",value:"standard"},{label:"88API Seedance／SD（通过我们的网关）",value:"88api"}]} onChange={value => patch({videoAdapter:value === "88api" ? "88api" : undefined})} />
++                    {isDirect88Api(draft.baseUrl) ? <span className="mt-1 block text-xs">已识别 88API 官方地址：多张参考图会分别上传，再与提示词一起提交。保持全能参考模式即可，无需更换地址或 Key。</span> : draft.videoAdapter === "88api" ? <span className="mt-1 block text-xs">填写已升级网关地址和用户网关 Key。支持无提示词素材生成、多图、首尾帧及参考音视频；分辨率按模型开放，已有自定义脚本仍优先。</span> : null}
++                </label> : null}
+                 <label className="block md:col-span-2">
+                     <span className="mb-1 block text-sm font-medium">API Key</span>
+                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+--- a/web/src/components/video-settings-panel.tsx
++++ b/web/src/components/video-settings-panel.tsx
+@@ -1,3 +1,4 @@
++import { getSeedanceCapabilities, usesSeedanceAdapter } from "@/lib/seedance-capabilities";
+ import { type ReactNode } from "react";
+ import { Slider } from "antd";
+ import { useTranslation } from "react-i18next";
+@@ -7,7 +8,7 @@
+ import { type CanvasTheme } from "@/lib/canvas-theme";
+ import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution, readVideoDimensions, VIDEO_SECONDS_MAX, VIDEO_SECONDS_MIN, videoRatioOptions } from "@/lib/media-size";
+ import { getNiuVideoCapabilities, videoSettingsError } from "@/lib/video-capabilities";
+-import { resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
++import { modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+ 
+ const resolutionOptions = [
+     { value: "480", label: "480p" },
+@@ -36,7 +37,9 @@
+     const { t } = useTranslation();
+     const model = config.model || config.videoModel;
+     const requestConfig = resolveModelRequestConfig(config, model);
+-    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model) : undefined;
++    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model, requestConfig.videoAdapter) : undefined;
++    const seedance = capabilities ? getSeedanceCapabilities(modelOptionName(model)) : undefined;
++    const maximumSeconds = seedance?.maxSeconds ?? VIDEO_SECONDS_MAX;
+     const settingsError = videoSettingsError(config);
+     const seconds = Number(clampVideoSeconds(config.videoSeconds || "6"));
+     const videoMode = normalizeVideoModeValue(config.videoMode);
+@@ -68,6 +71,8 @@
+         <ImageSettingsTheme theme={theme}>
+             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
++                {usesSeedanceAdapter(requestConfig) && resolveModelScript(config, model) && getSeedanceCapabilities(modelOptionName(model)) ? <div role="status" className="text-xs" style={{ color: theme.node.muted }}>当前自定义脚本会覆盖内置接入。若仍是旧版单图脚本，请在渠道的视频模型脚本编辑器中清空脚本并保存，再使用多素材功能。</div> : null}
++                {seedance ? <div className="text-xs" style={{ color: theme.node.muted }}>支持只传素材，未填写文字时会补充默认提示词。参考模式：图片最多 {seedance.maxImages} 张、视频 {seedance.maxVideos} 段、音频 {seedance.maxAudios} 段{seedance.maxMedia ? `，总计 ${seedance.maxMedia} 个` : ""}。{seedance.frames ? "首尾帧模式按连接顺序使用第一、第二张图片，不与音视频混用。" : "此模型不支持首尾帧。"}</div> : null}
+                 {settingsError ? <div role="alert" className="text-sm" style={{ color: theme.node.text }}>{settingsError}</div> : null}
+                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
+                     <div className="grid grid-cols-4 gap-2.5">
+@@ -107,15 +112,15 @@
+                 </SettingGroup>
+                 <SettingGroup title={t("settingsPanels.video.seconds")} color={theme.node.muted}>
+                     <div className="flex items-center gap-3" onMouseDown={(event) => event.stopPropagation()}>
+-                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={VIDEO_SECONDS_MAX} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
+-                        <SecondsInput value={seconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
++                        <Slider className="min-w-0 flex-1" min={VIDEO_SECONDS_MIN} max={maximumSeconds} step={1} value={seconds} onChange={(value) => onConfigChange("videoSeconds", String(Array.isArray(value) ? value[0] : value))} />
++                        <SecondsInput value={seconds} max={maximumSeconds} theme={theme} onCommit={(value) => onConfigChange("videoSeconds", String(value))} />
+                         <span className="shrink-0 text-sm" style={{ color: theme.node.muted }}>s</span>
+                     </div>
+                 </SettingGroup>
+                 <SettingGroup title={t("settingsPanels.video.mode")} color={theme.node.muted}>
+                     <div className="grid grid-cols-2 gap-2.5">
+                         {videoModeOptions.map((item) => (
+-                            <OptionPill key={item.value} selected={videoMode === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
++                            <OptionPill key={item.value} selected={videoMode === item.value} disabled={item.value === "frames" && seedance?.frames === false} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>
+                                 {t(`settingsPanels.video.modes.${item.labelKey}`)}
+                             </OptionPill>
+                         ))}
+@@ -195,9 +200,9 @@
+     );
+ }
+ 
+-function SecondsInput({ value, theme, onCommit }: { value: number; theme: CanvasTheme; onCommit: (value: number) => void }) {
++function SecondsInput({ value, max, theme, onCommit }: { value: number; max: number; theme: CanvasTheme; onCommit: (value: number) => void }) {
+     const commit = (input: HTMLInputElement) => {
+-        const next = Number(clampVideoSeconds(input.value));
++        const next = Math.min(max, Number(clampVideoSeconds(input.value)));
+         input.value = String(next);
+         onCommit(next);
+     };
+@@ -207,7 +212,7 @@
+             <input
+                 type="number"
+                 min={VIDEO_SECONDS_MIN}
+-                max={VIDEO_SECONDS_MAX}
++                max={max}
+                 className="min-w-0 flex-1 bg-transparent px-2 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                 defaultValue={value}
+                 key={value}
+--- /dev/null
++++ b/web/src/lib/seedance-capabilities.ts
+@@ -0,0 +1,47 @@
++// 88API official and cloud contracts, verified 2026-10-12.
++// Exact model IDs only: similarly named models at other providers are unrelated.
++export type SeedanceCapabilities = {
++    resolutions: readonly string[];
++    ratios: readonly string[];
++    maxSeconds: number;
++    maxImages: number;
++    maxVideos: number;
++    maxAudios: number;
++    maxMedia?: number;
++    frames: boolean;
++    generateAudio: boolean;
++};
++const ratios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
++const standard: SeedanceCapabilities = { resolutions: ["720"], ratios, maxSeconds: 15, maxImages: 9, maxVideos: 3, maxAudios: 3, frames: true, generateAudio: false };
++const capabilities: Record<string, SeedanceCapabilities> = {
++    "seedance-2.5官方版": { ...standard, maxSeconds: 30, maxImages: 30, maxVideos: 10, maxAudios: 10 },
++    "seedance-2.0官方版": standard,
++    "seedance-2.0-fast官方版": standard,
++    "seedance-2.0-mini官方版": { ...standard, resolutions: ["480", "720"], frames: false },
++    "SD2.0": { ...standard, resolutions: ["480", "720", "1080", "4k"], maxMedia: 12 },
++    "SD2.5": { ...standard, resolutions: ["480", "720", "1080"], maxSeconds: 30, maxImages: 30, maxVideos: 10, maxAudios: 10, generateAudio: true },
++};
++for (const model of ["SD2.0", "SD2.5"]) {
++    for (const resolution of capabilities[model].resolutions) {
++        const suffix = resolution.endsWith("k") ? resolution.toUpperCase() : `${resolution}P`;
++        capabilities[`${model} ${suffix}`] = { ...capabilities[model], resolutions: [resolution] };
++    }
++}
++export function getSeedanceCapabilities(model: string): SeedanceCapabilities | undefined {
++    return Object.hasOwn(capabilities, model) ? capabilities[model] : undefined;
++}
++export const seedanceDefaultPrompt = "保持参考素材中的主体外观和风格，生成自然连贯的动作与镜头";
++
++
++export function isDirect88Api(baseUrl: string): boolean {
++    try {
++        const url = new URL(baseUrl);
++        return url.origin === "https://api.88api.ai" && !url.username && !url.password && !url.search && !url.hash && ["", "/v1"].includes(url.pathname.replace(/\/+$/, ""));
++    } catch {
++        return false;
++    }
++}
++
++export function usesSeedanceAdapter(config: { baseUrl: string; videoAdapter?: "88api" }): boolean {
++    return config.videoAdapter === "88api" || isDirect88Api(config.baseUrl);
++}
+--- a/web/src/lib/video-capabilities.ts
++++ b/web/src/lib/video-capabilities.ts
+@@ -1,3 +1,4 @@
++import { getSeedanceCapabilities, usesSeedanceAdapter } from "./seedance-capabilities";
+ import i18n from "@/i18n";
+ import { computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
+ import { modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
+@@ -11,7 +12,9 @@
+     "minmax-h3": { resolutions: ["768", "2k"], ratios: ["16:9", "9:16", "1:1"] },
+ };
+ 
+-export function getNiuVideoCapabilities(baseUrl: string, model: string) {
++export function getNiuVideoCapabilities(baseUrl: string, model: string, videoAdapter?: "88api") {
++    const seedance = usesSeedanceAdapter({baseUrl, videoAdapter}) ? getSeedanceCapabilities(modelOptionName(model)) : undefined;
++    if (seedance) return seedance;
+     try {
+         if (new URL(baseUrl).origin !== "https://8.216.57.93") return undefined;
+     } catch {
+@@ -25,8 +28,14 @@
+     const model = config.model || config.videoModel;
+     if (resolveModelScript(config, model)) return "";
+     const request = resolveModelRequestConfig(config, model);
+-    const capabilities = request.apiFormat === "openai" ? getNiuVideoCapabilities(request.baseUrl, model) : undefined;
++    const capabilities = request.apiFormat === "openai" ? getNiuVideoCapabilities(request.baseUrl, model, request.videoAdapter) : undefined;
+     if (!capabilities) return "";
++    const seedance = getSeedanceCapabilities(modelOptionName(model));
++    if (seedance) {
++        const seconds = Number(config.videoSeconds || "4");
++        if (!Number.isInteger(seconds) || seconds < 4 || seconds > seedance.maxSeconds) return `当前模型支持 4–${seedance.maxSeconds} 秒，请调整时长`;
++        if (config.videoMode === "frames" && !seedance.frames) return "此模型不支持首尾帧，请选择参考模式";
++    }
+     const rawResolution = config.vquality.trim().toLowerCase();
+     const resolution = parseVideoResolution(config.vquality);
+     const ratio = inferVideoRatio(config.size);
+--- a/web/src/pages/video/index.tsx
++++ b/web/src/pages/video/index.tsx
+@@ -1,3 +1,4 @@
++import { getSeedanceCapabilities, seedanceDefaultPrompt, usesSeedanceAdapter } from "@/lib/seedance-capabilities";
+ import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+ import { useEffect, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
+ import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
+@@ -104,7 +105,9 @@
+     const agentTaskIdRef = useRef<string | undefined>(undefined);
+ 
+     const model = effectiveConfig.videoModel || effectiveConfig.model;
+-    const canGenerate = Boolean(prompt.trim());
++    const seedance = usesSeedanceAdapter(resolveModelRequestConfig(effectiveConfig, model)) ? getSeedanceCapabilities(modelOptionName(model)) : undefined;
++    const maxReferenceImages = seedance?.maxImages ?? 7;
++    const canGenerate = Boolean(prompt.trim() || (references.length && seedance));
+ 
+     useEffect(() => {
+         if (!running || !startedAt) return;
+@@ -120,14 +123,14 @@
+         const selectedFiles = Array.from(files || []);
+         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/"));
+         if (unsupported.length) message.warning(t("videoWorkbench.unsupportedFiles"));
+-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, 7 - references.length);
++        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/")).slice(0, maxReferenceImages - references.length);
+         const nextReferences = await Promise.all(
+             imageFiles.map(async (file) => {
+                 const image = await uploadImage(file);
+                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+             }),
+         );
+-        setReferences((value) => [...value, ...nextReferences].slice(0, 7));
++        setReferences((value) => [...value, ...nextReferences].slice(0, maxReferenceImages));
+     };
+ 
+     const handleReferenceDragEnter = (event: DragEvent<HTMLDivElement>) => {
+@@ -158,12 +161,12 @@
+                 return;
+             }
+             const nextReferences = await Promise.all(
+-                blobs.slice(0, 7 - references.length).map(async (blob, index) => {
++                blobs.slice(0, maxReferenceImages - references.length).map(async (blob, index) => {
+                     const image = await uploadImage(blob);
+                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                 }),
+             );
+-            setReferences((value) => [...value, ...nextReferences].slice(0, 7));
++            setReferences((value) => [...value, ...nextReferences].slice(0, maxReferenceImages));
+             message.success(t("videoWorkbench.clipboardAdded", { count: nextReferences.length }));
+         } catch {
+             message.error(t("videoWorkbench.clipboardEmpty"));
+@@ -222,7 +225,7 @@
+     }, [autoRunToken]);
+ 
+     const buildRequestSnapshot = () => {
+-        const text = prompt.trim();
++        const text = prompt.trim() || (references.length && seedance ? seedanceDefaultPrompt : "");
+         if (!text) {
+             message.error(t("videoWorkbench.promptRequired"));
+             return null;
+@@ -261,7 +264,7 @@
+             setPrompt(payload.content);
+         } else if (payload.kind === "image") {
+             const stored = await uploadImage(payload.dataUrl);
+-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, 7));
++            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, maxReferenceImages));
+         }
+         setAssetPickerOpen(false);
+     };
+--- /dev/null
++++ b/web/src/services/api/seedance-video.ts
+@@ -0,0 +1,64 @@
++import axios from "axios";
++import { getSeedanceCapabilities, isDirect88Api, seedanceDefaultPrompt } from "@/lib/seedance-capabilities";
++import { inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
++import { buildApiUrl, boolConfig, type AiConfig } from "@/stores/use-config-store";
++
++// Signed asset PUTs never use gateway authorization defaults/interceptors.
++type MediaTicket = { url: string; upload_url: string; method: string; headers: Record<string, string>; expires_at: number };
++
++export async function createSeedanceTask(config: AiConfig, model: string, prompt: string, images: File[], videos: File[], audios: File[], signal?: AbortSignal): Promise<string> {
++    const caps = getSeedanceCapabilities(model);
++    if (!caps) throw new Error("不支持的 Seedance 模型");
++    const seconds = Number(config.videoSeconds || "4");
++    if (!Number.isInteger(seconds) || seconds < 4 || seconds > caps.maxSeconds) throw new Error(`当前模型支持 4–${caps.maxSeconds} 秒，请调整时长`);
++    const resolution = parseVideoResolution(config.vquality);
++    if (!caps.resolutions.includes(resolution)) throw new Error(`当前模型支持 ${caps.resolutions.map(v => v.endsWith("k") ? v : `${v}p`).join(" / ")}，请选择对应分辨率`);
++    const ratio = inferVideoRatio(config.size);
++    if (!caps.ratios.includes(ratio)) throw new Error("请选择明确的视频比例，不支持自动比例");
++    const frames = config.videoMode === "frames";
++    if (frames && (!caps.frames || images.length < 1 || images.length > 2 || videos.length || audios.length)) throw new Error("首尾帧模式需要一张首帧或两张首尾帧图片，不能混用音视频；mini 不支持首尾帧");
++    if (images.length > caps.maxImages || videos.length > caps.maxVideos || audios.length > caps.maxAudios || (caps.maxMedia && images.length + videos.length + audios.length > caps.maxMedia)) throw new Error(`参考素材超出模型上限：图片 ${caps.maxImages}、视频 ${caps.maxVideos}、音频 ${caps.maxAudios}${caps.maxMedia ? `，合计 ${caps.maxMedia}` : ""}`);
++    const text = prompt.trim() || (images.length + videos.length + audios.length ? seedanceDefaultPrompt : "");
++    if (!text) throw new Error("请填写提示词或连接参考素材");
++    // Validate the complete set before requesting any upload tickets.
++    for (const [files, types] of [[images, ["image/png", "image/jpeg", "image/webp"]], [videos, ["video/mp4", "video/webm", "video/quicktime"]], [audios, ["audio/mpeg", "audio/wav", "audio/ogg", "audio/mp4", "audio/flac"]]] as const) {
++        for (const file of files) {
++            if (!types.some(type => type === file.type) || !file.size || file.size > 100000000) throw new Error("素材格式不支持或文件超过上传接口的 100 MB 上限");
++            if (file.type.startsWith("image/") && file.size > 10 * 1024 * 1024) throw new Error("参考图片不能超过 10 MiB");
++        }
++    }
++    const metadata: Record<string, unknown> = {};
++    const body: Record<string, unknown> = { model, prompt: text, duration: seconds, resolution: resolution.endsWith("k") ? resolution : `${resolution}p`, ratio };
++    const imageUrls: string[] = [];
++    for (const image of images) imageUrls.push(await uploadSeedanceMedia(config, model, image, signal));
++    if (frames) {
++        metadata.firstFrame = imageUrls[0];
++        if (imageUrls[1]) metadata.lastFrame = imageUrls[1];
++    } else if (imageUrls.length) body.images = imageUrls;
++    for (const [key, files] of [["referenceVideos", videos], ["referenceAudios", audios]] as const) {
++        const urls: string[] = [];
++        for (const file of files) urls.push(await uploadSeedanceMedia(config, model, file, signal));
++        if (urls.length) metadata[key] = urls;
++    }
++    if (Object.keys(metadata).length) body.metadata = metadata;
++    if (caps.generateAudio) body.generate_audio = boolConfig(config.videoGenerateAudio, true);
++    const response = await axios.post<{ id?: string }>(buildApiUrl(config.baseUrl, "/videos"), body, { headers: { Authorization: `Bearer ${config.apiKey}` }, signal });
++    if (typeof response.data.id !== "string" || !response.data.id.trim()) throw new Error("网关未返回任务 ID，请先核对任务记录，不要重复提交");
++    return response.data.id;
++}
++
++export async function uploadSeedanceMedia(config: AiConfig, model: string, file: File, signal?: AbortSignal): Promise<string> {
++    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
++    const sha256 = btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++    const uploadRequest = { size: file.size, mime_type: file.type, sha256, ...(isDirect88Api(config.baseUrl) ? {} : { model }) };
++    const ticket = (await axios.post<MediaTicket>(buildApiUrl(config.baseUrl, "/media/uploads"), uploadRequest, { headers: { Authorization: `Bearer ${config.apiKey}` }, signal })).data;
++    for (const value of [ticket.url, ticket.upload_url]) {
++        const url = new URL(value);
++        if (url.origin !== "https://assets.88api.ai" || url.username || url.password || url.hash || !url.pathname.startsWith("/media/reference-media/")) throw new Error("素材上传凭证地址无效");
++    }
++    const headers = new Headers(ticket.headers);
++    if (ticket.method !== "PUT" || !Number.isSafeInteger(ticket.expires_at) || ticket.expires_at * 1000 <= Date.now() || [...headers].length !== 2 || headers.get("content-type") !== file.type || !headers.get("x-media-upload-token")) throw new Error("素材上传凭证无效或已过期");
++    const uploaded = await fetch(ticket.upload_url, { method: "PUT", body: file, headers: { "Content-Type": file.type, "X-Media-Upload-Token": headers.get("x-media-upload-token")! }, signal, redirect: "error", credentials: "omit" });
++    if (uploaded.status !== 201) throw new Error("素材上传未完成，未提交生成任务");
++    return ticket.url;
++}
+--- a/web/src/services/api/video.ts
++++ b/web/src/services/api/video.ts
+@@ -1,3 +1,5 @@
++import { getSeedanceCapabilities, usesSeedanceAdapter } from "@/lib/seedance-capabilities";
++import { createSeedanceTask } from "./seedance-video";
+ import axios from "axios";
+ import { nanoid } from "nanoid";
+ 
+@@ -157,6 +159,14 @@
+     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
+     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
++    if (usesSeedanceAdapter(config) && getSeedanceCapabilities(modelOptionName(model))) {
++        try {
++            const id = await createSeedanceTask(config, modelOptionName(model), prompt, images, videos, audios, options?.signal);
++            return { id, provider: "openai", model };
++        } catch (error) {
++            throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
++        }
++    }
+     const mode = resolveVideoMode(config.videoMode, images.length);
+     const body = new FormData();
+     body.append("model", modelOptionName(model));
+@@ -196,7 +206,7 @@
+ 
+ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+     try {
+-        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
++        const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: aiHeaders(config), signal: options?.signal })).data);
+         if (video.status === "failed" || video.status === "cancelled") {
+             let message = readApiErrorMessage(video.error?.message).trim();
+             if (!message && isNiuVideoRequest(config, task.model)) {
+@@ -213,9 +223,9 @@
+             return { status: "failed", error: message || apiText("videoGenerationFailed") };
+         }
+         const url = videoResultUrl(video);
+-        if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
++        if (url && (!usesSeedanceAdapter(config) || !getSeedanceCapabilities(modelOptionName(task.model)) || video.status === "completed")) return { status: "completed", result: await videoResultFromUrl(url, options) };
+         if (video.status === "completed") {
+-            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
++            const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
+             await assertVideoBlob(content.data);
+             return { status: "completed", result: { blob: content.data } };
+         }
+--- a/web/src/stores/use-config-store.ts
++++ b/web/src/stores/use-config-store.ts
+@@ -1,3 +1,4 @@
++import { getSeedanceCapabilities } from "@/lib/seedance-capabilities";
+ import { useMemo } from "react";
+ import { create } from "zustand";
+ import { persist } from "zustand/middleware";
+@@ -16,6 +17,7 @@
+ };
+ 
+ export type ModelChannel = {
++    videoAdapter?: "88api";
+     id: string;
+     name: string;
+     baseUrl: string;
+@@ -25,6 +27,7 @@
+ };
+ 
+ export type AiConfig = {
++    videoAdapter?: "88api";
+     channelMode: "remote" | "local";
+     baseUrl: string;
+     apiKey: string;
+@@ -156,6 +159,7 @@
+ 
+ /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
+ export function guessCapability(name: string): ModelCapability {
++    if (getSeedanceCapabilities(name)) return "video";
+     const value = name.toLowerCase();
+     if (VIDEO_KEYWORDS.some((keyword) => value.includes(keyword))) return "video";
+     if (AUDIO_KEYWORDS.some((keyword) => value.includes(keyword))) return "audio";
+@@ -310,6 +314,7 @@
+         apiKey: channel?.apiKey || "",
+         apiFormat,
+         models: normalizeChannelModels(channel?.models),
++        ...(channel?.videoAdapter === "88api" ? { videoAdapter: "88api" as const } : {}),
+     };
+ }
+ 
+@@ -449,6 +454,7 @@
+         baseUrl: channel.baseUrl,
+         apiKey: channel.apiKey,
+         apiFormat: channel.apiFormat,
++        videoAdapter: channel.videoAdapter,
+     };
+ }
+ 
+--- /dev/null
++++ b/web/tests/seedance-video.test.ts
+@@ -0,0 +1,107 @@
++import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
++import axios from "axios";
++import { installBrowserStorage } from "./helpers/browser-storage";
++import type { AiConfig } from "../src/stores/use-config-store";
++let restore: () => void;
++let nativeCreate: typeof import("../src/services/api/seedance-video").createSeedanceTask;
++function create(config: AiConfig, prompt: string, images: File[], videos: File[], audios: File[]) { return nativeCreate(config, config.model, prompt, images, videos, audios); }
++let defaults: AiConfig;
++const adapter = axios.defaults.adapter, originalFetch = globalThis.fetch;
++let requests: {url: string; body: Record<string, any>}[], uploads: RequestInit[];
++beforeAll(async () => { restore = installBrowserStorage(); ({defaultConfig: defaults} = await import("../src/stores/use-config-store")); ({createSeedanceTask: nativeCreate} = await import("../src/services/api/seedance-video")); });
++beforeEach(() => {
++ requests=[];uploads=[];
++ axios.defaults.adapter = async config => {
++  const body = JSON.parse(config.data); requests.push({url:config.url!,body});
++  const url=`https://assets.88api.ai/media/reference-media/${requests.length}`;
++  const data=config.url!.endsWith("/media/uploads") ? {url,upload_url:url,method:"PUT",headers:{"Content-Type":body.mime_type,"X-Media-Upload-Token":"scoped"},expires_at:Math.floor(Date.now()/1000)+600} : {id:"public/task"};
++  return {config,data,status:200,statusText:"OK",headers:{}};
++ };
++ globalThis.fetch=(async (_url,options)=>{uploads.push(options!);return new Response(null,{status:201});}) as typeof fetch;
++});
++afterEach(()=>{axios.defaults.adapter=adapter;globalThis.fetch=originalFetch;}); afterAll(()=>restore());
++function config(model="seedance-2.5官方版", patch:Partial<AiConfig>={}):AiConfig {return {...structuredClone(defaults),model,apiKey:"gateway-fixture",baseUrl:"http://localhost:3002",videoMode:"reference",...patch};}
++const image=()=>new File([new Uint8Array([1,2,3])],"cat.png",{type:"image/png"});
++test("image-only uploads all references before exactly one create and never leaks gateway key",async()=>{
++ expect(await create(config(),"",[image(),image()],[],[])).toBe("public/task");
++ expect(requests.map(r=>r.url)).toEqual(["http://localhost:3002/v1/media/uploads","http://localhost:3002/v1/media/uploads","http://localhost:3002/v1/videos"]);
++ expect(requests[2].body.prompt).toContain("保持参考素材"); expect(requests[2].body.images).toHaveLength(2);expect(requests[2].body).not.toHaveProperty("generate_audio");
++ const digest=Buffer.from(await crypto.subtle.digest("SHA-256",new Uint8Array([1,2,3]))).toString("base64url");expect(requests[0].body.sha256).toBe(digest);
++ for(const put of uploads){expect(put.method).toBe("PUT");expect(put.credentials).toBe("omit");expect(put.redirect).toBe("error");expect(put.headers).toEqual({"Content-Type":"image/png","X-Media-Upload-Token":"scoped"});expect(put.body).toBeInstanceOf(File);}
++});
++test("frame ordering uses firstFrame and lastFrame without regular images",async()=>{
++ await create(config(undefined,{videoMode:"frames"}),"",[image(),image()],[],[]);
++ expect(requests[2].body.metadata).toEqual({firstFrame:"https://assets.88api.ai/media/reference-media/1",lastFrame:"https://assets.88api.ai/media/reference-media/2"});expect(requests[2].body).not.toHaveProperty("images");
++});
++test("reference video and audio use metadata URLs",async()=>{
++ await create(config(),"camera",[],[new File(["v"],"v.mp4",{type:"video/mp4"})],[new File(["a"],"a.wav",{type:"audio/wav"})]);expect(requests[2].body.metadata.referenceVideos).toHaveLength(1);expect(requests[2].body.metadata.referenceAudios).toHaveLength(1);
++});
++test.each(["SD2.0","SD2.5"])("%s supports 1080p without switching models",async model=>{await create(config(model,{vquality:"1080"}),"walk",[],[],[]);expect(requests[0].body.model).toBe(model);expect(requests[0].body.resolution).toBe("1080p");});
++test.each(["seedance-2.0官方版","seedance-2.0-fast官方版","seedance-2.0-mini官方版"])("%s uses exact model ID",async model=>{await create(config(model),"walk",[],[],[]);expect(requests[0].body.model).toBe(model);});
++test("invalid resolution, frames, durations and combined counts fail before uploads",async()=>{
++ await expect(create(config(undefined,{vquality:"1080"}),"walk",[image()],[],[])).rejects.toThrow("720p");
++ await expect(create(config("seedance-2.0-mini官方版",{videoMode:"frames"}),"walk",[image()],[],[])).rejects.toThrow("首尾帧");
++ await expect(create(config(undefined,{videoMode:"frames"}),"walk",[image()],[new File(["v"],"v.mp4",{type:"video/mp4"})],[])).rejects.toThrow("首尾帧");
++ await expect(create(config("SD2.0",{videoSeconds:"30"}),"walk",[],[],[])).rejects.toThrow("4–15");
++ await expect(create(config("SD2.0"),"walk",Array.from({length:9},image),Array.from({length:3},()=>new File(["v"],"v.mp4",{type:"video/mp4"})),[new File(["a"],"a.wav",{type:"audio/wav"})])).rejects.toThrow("合计 12");
++ expect(requests).toHaveLength(0);
++});
++test("failed upload never creates a video",async()=>{globalThis.fetch=(async()=>new Response(null,{status:403})) as typeof fetch;await expect(create(config(),"walk",[image()],[],[])).rejects.toThrow("素材上传未完成");expect(requests).toHaveLength(1);});
++test("failed video creation does not retry",async()=>{let count=0;axios.defaults.adapter=async()=>{count++;throw new Error("offline timeout");};await expect(create(config(),"walk",[],[],[])).rejects.toThrow("offline timeout");expect(count).toBe(1);});
++test("foreign upload host gets no media or credentials",async()=>{axios.defaults.adapter=async config=>({config,data:{url:"https://evil.example/a",upload_url:"https://evil.example/a"},status:200,statusText:"OK",headers:{}});await expect(create(config(),"walk",[image()],[],[])).rejects.toThrow("凭证地址无效");expect(uploads).toHaveLength(0);});
++
++test("legacy SD2.0 480P remains its own fixed-tier model", async () => {
++    await create(config("SD2.0 480P", {vquality:"480"}), "", [image(),image()], [], []);
++    expect(requests[2].body.model).toBe("SD2.0 480P"); expect(requests[2].body.resolution).toBe("480p");
++    await expect(create(config("SD2.0 480P", {vquality:"1080"}), "walk", [], [], [])).rejects.toThrow("480p");
++});
++
++test("the standard video API chooses the built-in Seedance adapter and keeps a queryable task ID", async () => {
++    const {createVideoGenerationTask, pollVideoGenerationTask} = await import("../src/services/api/video");
++    const model="seedance-2.5官方版";
++    const selected={...config(),model:`fixture::${model}`,videoModel:`fixture::${model}`,channels:[{id:"fixture",name:"Fixture",videoAdapter:"88api" as const,apiFormat:"openai" as const,baseUrl:"http://localhost:3002",apiKey:"fixture-user-key",models:[{name:model,capability:"video" as const}]}]};
++    const task=await createVideoGenerationTask(selected,"walk");
++    expect(task).toEqual({id:"public/task",provider:"openai",model:`fixture::${model}`});
++    const queries:string[]=[];
++    axios.defaults.adapter=async config=>{queries.push(config.url!);return {config,data:{status:"in_progress",url:"https://cdn.example/pending.mp4"},status:200,statusText:"OK",headers:{}};};
++    expect(await pollVideoGenerationTask(selected,task)).toEqual({status:"pending"});
++    expect(queries).toEqual(["http://localhost:3002/v1/videos/public%2Ftask"]);
++});
++
++test("a same-name model on a generic channel keeps its existing multipart path", async () => {
++    const {createVideoGenerationTask} = await import("../src/services/api/video");
++    const selected = {...config(), model:"fixture::SD2.0", channels:[{id:"fixture",name:"Existing",apiFormat:"openai" as const,baseUrl:"https://other.example",apiKey:"fixture",models:[{name:"SD2.0",capability:"video" as const}]}]};
++    let submitted: unknown;
++    axios.defaults.adapter=async config=>{submitted=config.data;return {config,data:{id:"existing-task"},status:200,statusText:"OK",headers:{}};};
++    await createVideoGenerationTask(selected,"walk");expect(submitted).toBeInstanceOf(FormData);expect((submitted as FormData).get("model")).toBe("SD2.0");
++});
++
++test("88API opt-in persists in the selected channel and never leaks to other channels", async () => {
++    const {createModelChannel,resolveModelRequestConfig} = await import("../src/stores/use-config-store");
++    const seedance = createModelChannel({id:"seedance",videoAdapter:"88api",models:[{name:"SD2.0",capability:"video"}]});
++    const generic = createModelChannel({id:"generic",models:[{name:"SD2.0",capability:"video"}]});
++    const selected = {...config(), channels:[seedance,generic]};
++    expect(resolveModelRequestConfig(selected,"seedance::SD2.0").videoAdapter).toBe("88api");
++    expect(resolveModelRequestConfig(selected,"generic::SD2.0").videoAdapter).toBeUndefined();
++});
++
++test.each(["https://api.88api.ai", "https://api.88api.ai/v1/" ])("direct 88API %s uses ordered image URLs and preserves the story prompt without gateway opt-in", async baseUrl => {
++    const {createVideoGenerationTask} = await import("../src/services/api/video");
++    const model = "SD2.0 480P";
++    const prompt = "参考图1的主体，按图2的场景展开故事，镜头依次推进";
++    const selected = {...config(model, {vquality:"480"}), model:`direct::${model}`, channels:[{id:"direct",name:"Direct",apiFormat:"openai" as const,baseUrl,apiKey:"fixture-upstream",models:[{name:model,capability:"video" as const}]}]};
++    const references = ["first", "second"].map(id => ({id,name:`${id}.png`,type:"image/png",dataUrl:"data:image/png;base64,AQID"}));
++    const task = await createVideoGenerationTask(selected, prompt, references);
++    expect(task.provider).toBe("openai");
++    expect(requests.map(r=>r.url)).toEqual(["https://api.88api.ai/v1/media/uploads","https://api.88api.ai/v1/media/uploads","https://api.88api.ai/v1/videos"]);
++    expect(Object.keys(requests[0].body).sort()).toEqual(["mime_type","sha256","size"]);
++    expect(requests[2].body.prompt).toBe(prompt);
++    expect(requests[2].body.images).toEqual(["https://assets.88api.ai/media/reference-media/1","https://assets.88api.ai/media/reference-media/2"]);
++    expect(requests[2].body).not.toHaveProperty("metadata");
++    expect(uploads).toHaveLength(2);
++});
++
++test.each(["https://api.88api.ai.evil.example", "http://api.88api.ai", "https://user@api.88api.ai", "https://api.88api.ai/other", "https://api.88api.ai?target=evil", "http://localhost:3002"])("%s does not implicitly select the direct adapter", async baseUrl => {
++    const {usesSeedanceAdapter} = await import("../src/lib/seedance-capabilities");
++    expect(usesSeedanceAdapter({baseUrl})).toBe(false);
++});
+--- a/web/tests/video-settings-panel.test.tsx
++++ b/web/tests/video-settings-panel.test.tsx
+@@ -21,7 +21,7 @@
+     restoreStorage();
+ });
+ 
+-function renderSettings(model: string, options: { size?: string; resolution?: string; baseUrl?: string; script?: string } = {}) {
++function renderSettings(model: string, options: { size?: string; resolution?: string; baseUrl?: string; script?: string; videoAdapter?: "88api" } = {}) {
+     const config: AiConfig = {
+         ...structuredClone(configModule.defaultConfig),
+         model: `default::${model}`,
+@@ -31,6 +31,7 @@
+         channels: [{
+             ...structuredClone(configModule.defaultConfig.channels[0]),
+             baseUrl: options.baseUrl || "https://8.216.57.93",
++            videoAdapter: options.videoAdapter,
+             models: [{ name: model, capability: "video", script: options.script }],
+         }],
+     };
+@@ -98,3 +99,27 @@
+     }
+     expect(view.html).not.toContain('role="alert"');
+ });
++
++
++test.each([
++    {model: "seedance-2.5官方版", resolutions: ["720p"], max: 30},
++    {model: "seedance-2.0官方版", resolutions: ["720p"], max: 15},
++    {model: "seedance-2.0-fast官方版", resolutions: ["720p"], max: 15},
++    {model: "seedance-2.0-mini官方版", resolutions: ["480p", "720p"], max: 15},
++    {model: "SD2.5", resolutions: ["480p", "720p", "1080p"], max: 30},
++    {model: "SD2.0", resolutions: ["480p", "720p", "1080p", "4K"], max: 15},
++])("$model presents its verified resolution and duration limits", ({model, resolutions, max}) => {
++    const view = renderSettings(model, {baseUrl: "http://localhost:3002", videoAdapter: "88api"});
++    for (const label of ["480p", "720p", "1080p", "4K"]) expect(/\bdisabled=""/.test(view.buttons.get(label)!)).toBe(!resolutions.includes(label));
++    const frames = i18nModule.default.t("settingsPanels.video.modes.frames");
++    expect(/\bdisabled=""/.test(view.buttons.get(frames)!)).toBe(model.includes("mini"));
++    expect(view.inputs.some(input => input.includes(`max="${max}"`) && input.includes('min="4"'))).toBe(true);
++    expect(view.html).toContain("未填写文字时会补充默认提示词");
++});
++
++test("direct official 88API address automatically exposes fixed model capabilities without channel opt-in", () => {
++    const view = renderSettings("SD2.0 480P", {baseUrl:"https://api.88api.ai",resolution:"480"});
++    expect(/\bdisabled=""/.test(view.buttons.get("480p")!)).toBe(false);
++    expect(/\bdisabled=""/.test(view.buttons.get("720p")!)).toBe(true);
++    expect(view.html).toContain("图片最多 9 张");
++});

@@ -78,6 +78,8 @@ func SetRelayRouter(router *gin.Engine) {
 		relayV1Router.GET("/responses", controller.ResponsesWebSocket)
 	}
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
+	relayV1Router.POST("/media/uploads", controller.PrepareSeedanceMediaUpload, middleware.Distribute(), controller.SeedanceMediaUpload)
+
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")

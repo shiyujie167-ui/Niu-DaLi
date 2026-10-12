@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"io/fs"
+	"maps"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var expectedKeys = []string{"alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "mengwuxian", "sora", "sunoapi", "vertex-ai", "vidu"}
+var expectedKeys = []string{"88api-seedance", "alibaba", "doubao", "google", "hailuo", "jimeng", "kling", "mengwuxian", "sora", "sunoapi", "vertex-ai", "vidu"}
 
 func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing.T) {
 	generation := jsplugin.DefaultRegistry.Generation()
@@ -74,6 +75,344 @@ func TestBuiltInVendorPluginsDeclareNativeRoutesAndLegacyChannelTypes(t *testing
 	}
 }
 
+func loadSeedance88Plugin(t *testing.T) *jsplugin.LoadedPlugin {
+	t.Helper()
+	source, err := Source("88api-seedance")
+	require.NoError(t, err)
+	plugin, err := jsplugin.NewRegistry().RegisterFactory(source, jsplugin.Options{Key: "88api-seedance"})
+	require.NoError(t, err)
+	return plugin
+}
+
+func callSeedance88Hook(t *testing.T, plugin *jsplugin.LoadedPlugin, hook string, args ...any) map[string]any {
+	t.Helper()
+	value, err := plugin.Engine.Call(t.Context(), hook, args...)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(value)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &result))
+	return result
+}
+
+func decodeSeedance88Request(t *testing.T, plugin *jsplugin.LoadedPlugin, model string, body map[string]any) (map[string]any, error) {
+	t.Helper()
+	value, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+		"model": model, "body": body,
+	})
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := common.Marshal(value)
+	require.NoError(t, err)
+	var result map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &result))
+	return result, nil
+}
+
+func TestSeedance88VideoRequests(t *testing.T) {
+	plugin := loadSeedance88Plugin(t)
+	const model = "seedance-2.0官方版"
+
+	t.Run("forwards every documented JSON parameter and explicit seed zero", func(t *testing.T) {
+		request := map[string]any{
+			"model": model, "prompt": "orbit the reference product", "duration": float64(8),
+			"resolution": "720p", "ratio": "16:9", "images": []any{"https://images.example/product.jpg"},
+			"negative_prompt": "blur", "seed": float64(0),
+		}
+		intent, err := decodeSeedance88Request(t, plugin, model, map[string]any{"kind": "json", "value": request})
+		require.NoError(t, err)
+		assert.Equal(t, "image_to_video", intent["action"])
+		assert.Equal(t, request, intent["requestBody"])
+		for _, upstream := range []string{"vendor", "new_api"} {
+			descriptor := callSeedance88Hook(t, plugin, "buildSubmitRequest", map[string]any{
+				"model": model, "upstreamModel": model, "requestBody": intent["requestBody"],
+				"baseUrl": "https://api.88api.ai", "apiKey": "test-channel-key", "authHeader": "Bearer test-channel-key",
+				"upstream": map[string]any{"kind": upstream},
+			})
+			assert.Equal(t, "https://api.88api.ai/v1/videos", descriptor["url"])
+			assert.Equal(t, "POST", descriptor["method"])
+			assert.Equal(t, request, descriptor["body"])
+			assert.Equal(t, "Bearer test-channel-key", descriptor["headers"].(map[string]any)["Authorization"])
+		}
+	})
+
+	t.Run("model mapping keeps the client identity and sends the upstream model", func(t *testing.T) {
+		intentValue, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "customer-video", "upstreamModel": model,
+			"body": map[string]any{"kind": "json", "value": map[string]any{"model": "customer-video", "prompt": "a cat"}},
+		})
+		require.NoError(t, err)
+		intentData, err := common.Marshal(intentValue)
+		require.NoError(t, err)
+		var intent map[string]any
+		require.NoError(t, common.Unmarshal(intentData, &intent))
+		assert.Equal(t, "customer-video", intent["model"])
+		descriptor := callSeedance88Hook(t, plugin, "buildSubmitRequest", map[string]any{
+			"model": "customer-video", "upstreamModel": model, "requestBody": intent["requestBody"],
+			"baseUrl": "https://api.88api.ai", "apiKey": "test-channel-key",
+		})
+		assert.NotContains(t, descriptor, "model")
+		assert.Equal(t, model, descriptor["body"].(map[string]any)["model"])
+	})
+
+	t.Run("multipart forwards one opaque image reference and normalized parameters", func(t *testing.T) {
+		file := map[string]any{"ref": "request_file:input_reference#0", "field": "input_reference", "filename": "product.webp", "mimeType": "image/webp", "size": 42}
+		intent, err := decodeSeedance88Request(t, plugin, model, map[string]any{
+			"kind": "multipart", "files": []any{file},
+			"fields": map[string]any{
+				"model": []string{model}, "prompt": []string{"orbit the product"}, "seconds": []string{"8"},
+				"resolution": []string{"720p"}, "ratio": []string{"9:16"}, "negative_prompt": []string{"blur"}, "seed": []string{"0"},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "image_to_video", intent["action"])
+		descriptor := callSeedance88Hook(t, plugin, "buildSubmitRequest", map[string]any{
+			"model": model, "upstreamModel": model, "requestBody": intent["requestBody"], "files": []any{file},
+			"baseUrl": "https://api.88api.ai", "apiKey": "test-channel-key",
+		})
+		assert.Equal(t, "multipart", descriptor["bodyType"])
+		parts, ok := descriptor["parts"].([]any)
+		require.True(t, ok)
+		values := map[string]any{}
+		for _, partValue := range parts {
+			part := partValue.(map[string]any)
+			name := part["name"].(string)
+			if name == "input_reference" {
+				assert.Equal(t, file["ref"], part["fileRef"])
+				assert.Equal(t, file["filename"], part["filename"])
+			} else {
+				values[name] = part["value"]
+			}
+		}
+		assert.Equal(t, map[string]any{
+			"model": model, "prompt": "orbit the product", "duration": float64(8), "resolution": "720p",
+			"ratio": "9:16", "negative_prompt": "blur", "seed": float64(0),
+		}, values)
+		assert.Len(t, parts, len(values)+1)
+	})
+
+	t.Run("first and last frames survive JSON and multipart decoding", func(t *testing.T) {
+		frames := map[string]any{"firstFrame": "https://images.example/start.jpg", "lastFrame": "https://images.example/end.jpg"}
+		for _, body := range []map[string]any{
+			{"kind": "json", "value": map[string]any{"model": model, "prompt": "smooth transition", "metadata": frames}},
+			{"kind": "multipart", "fields": map[string]any{"model": []string{model}, "prompt": []string{"smooth transition"}, "metadata": []string{`{"firstFrame":"https://images.example/start.jpg","lastFrame":"https://images.example/end.jpg"}`}}},
+		} {
+			intent, err := decodeSeedance88Request(t, plugin, model, body)
+			require.NoError(t, err)
+			assert.Equal(t, "image_to_video", intent["action"])
+			assert.Equal(t, frames, intent["requestBody"].(map[string]any)["metadata"])
+		}
+	})
+}
+
+func TestSeedance88VideoValidationAndUsage(t *testing.T) {
+	plugin := loadSeedance88Plugin(t)
+	const model = "seedance-2.0官方版"
+	valid := []struct {
+		model      string
+		parameters map[string]any
+		seconds    float64
+		resolution string
+	}{
+		{"seedance-2.5官方版", map[string]any{}, 4, "720p"},
+		{"seedance-2.5官方版", map[string]any{"duration": 30}, 30, "720p"},
+		{model, map[string]any{"duration": 4}, 4, "720p"},
+		{model, map[string]any{"duration": 15}, 15, "720p"},
+		{"seedance-2.0-fast官方版", map[string]any{"seconds": "15"}, 15, "720p"},
+		{"seedance-2.0-mini官方版", map[string]any{}, 5, "480p"},
+		{"seedance-2.0-mini官方版", map[string]any{"duration": 15, "resolution": "720p"}, 15, "720p"},
+	}
+	for _, tc := range valid {
+		t.Run(tc.model+" valid boundary", func(t *testing.T) {
+			request := map[string]any{"model": tc.model, "prompt": "a cat"}
+			maps.Copy(request, tc.parameters)
+			intent, err := decodeSeedance88Request(t, plugin, tc.model, map[string]any{"kind": "json", "value": request})
+			require.NoError(t, err)
+			facts := callSeedance88Hook(t, plugin, "extractUsage", map[string]any{"model": tc.model, "upstreamModel": tc.model, "requestBody": intent["requestBody"]})
+			assert.Equal(t, map[string]any{"seconds": tc.seconds, "resolution": tc.resolution}, facts)
+			assert.Equal(t, tc.seconds, intent["requestBody"].(map[string]any)["duration"])
+			assert.Equal(t, "16:9", intent["requestBody"].(map[string]any)["ratio"])
+		})
+	}
+
+	invalid := []struct {
+		name       string
+		model      string
+		parameters map[string]any
+	}{
+		{"below duration minimum", model, map[string]any{"duration": 3}},
+		{"above duration maximum", model, map[string]any{"duration": 16}},
+		{"above 2.5 duration maximum", "seedance-2.5官方版", map[string]any{"duration": 31}},
+		{"fractional duration", model, map[string]any{"duration": 4.5}},
+		{"string duration in JSON", model, map[string]any{"duration": "8"}},
+		{"unbounded duration", model, map[string]any{"duration": 1e30}},
+		{"numeric seconds", model, map[string]any{"seconds": 8}},
+		{"fractional seconds", model, map[string]any{"seconds": "4.5"}},
+		{"conflicting seconds and duration", model, map[string]any{"duration": 8, "seconds": "8"}},
+		{"unsupported resolution", model, map[string]any{"resolution": "1080p"}},
+		{"unsupported ratio", model, map[string]any{"ratio": "auto"}},
+		{"callback is unsupported", model, map[string]any{"callback_url": "https://callback.example"}},
+		{"audio is unsupported even false", model, map[string]any{"generate_audio": false}},
+		{"unsupported parameter", model, map[string]any{"n": 2}},
+		{"image alias", model, map[string]any{"image": "https://images.example/a.jpg"}},
+		{"last frame without first", model, map[string]any{"metadata": map[string]any{"lastFrame": "https://images.example/end.jpg"}}},
+		{"reference images and first frame", model, map[string]any{"images": []any{"https://images.example/a.jpg"}, "metadata": map[string]any{"firstFrame": "https://images.example/start.jpg"}}},
+		{"mini frames unsupported", "seedance-2.0-mini官方版", map[string]any{"metadata": map[string]any{"firstFrame": "https://images.example/start.jpg"}}},
+		{"metadata duration bypass", model, map[string]any{"metadata": map[string]any{"duration": 1e30}}},
+		{"unsafe seed", model, map[string]any{"seed": 1e30}},
+		{"fractional seed", model, map[string]any{"seed": 1.5}},
+		{"missing prompt", model, map[string]any{"prompt": " "}},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			request := map[string]any{"model": tc.model, "prompt": "a cat"}
+			maps.Copy(request, tc.parameters)
+			_, err := decodeSeedance88Request(t, plugin, tc.model, map[string]any{"kind": "json", "value": request})
+			require.Error(t, err)
+		})
+	}
+
+	t.Run("image limits follow the selected model", func(t *testing.T) {
+		for _, tc := range []struct {
+			model string
+			limit int
+		}{{model, 9}, {"seedance-2.5官方版", 30}} {
+			images := make([]any, tc.limit+1)
+			for i := range images {
+				images[i] = "https://images.example/reference.jpg"
+			}
+			request := map[string]any{"model": tc.model, "prompt": "a cat", "images": images[:tc.limit]}
+			_, err := decodeSeedance88Request(t, plugin, tc.model, map[string]any{"kind": "json", "value": request})
+			require.NoError(t, err)
+			request["images"] = images
+			_, err = decodeSeedance88Request(t, plugin, tc.model, map[string]any{"kind": "json", "value": request})
+			require.Error(t, err)
+		}
+	})
+
+	t.Run("multipart rejects duplicated scalars and conflicting files", func(t *testing.T) {
+		file := map[string]any{"ref": "request_file:input_reference", "field": "input_reference", "filename": "a.png", "mimeType": "image/png", "size": 42}
+		for _, body := range []map[string]any{
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "duration": []string{"8", "8"}}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "duration": []string{"1e30"}}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "duration": []string{"8"}, "seconds": []string{"8"}}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "images": []string{`["https://images.example/a.jpg"]`}}, "files": []any{file}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}}, "files": []any{file, file}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "generate_audio": []string{"false"}}},
+			{"kind": "multipart", "fields": map[string]any{"prompt": []string{"a cat"}, "metadata": []string{`{"firstFrame":"https://images.example/start.jpg"}`}}, "files": []any{file}},
+		} {
+			_, err := decodeSeedance88Request(t, plugin, model, body)
+			require.Error(t, err)
+		}
+	})
+
+	t.Run("driver and billing hooks defend against invalid normalized duration", func(t *testing.T) {
+		ctx := map[string]any{"model": model, "upstreamModel": model, "baseUrl": "https://api.88api.ai", "apiKey": "test-channel-key", "requestBody": map[string]any{"model": model, "prompt": "a cat", "duration": 1e30}}
+		for _, hook := range []string{"buildSubmitRequest", "extractUsage"} {
+			_, err := plugin.Engine.Call(t.Context(), hook, ctx)
+			require.Error(t, err, hook)
+		}
+	})
+
+	t.Run("legacy per-call prices do not treat duration facts as multipliers", func(t *testing.T) {
+		value, err := plugin.Engine.Call(t.Context(), "extractUsage", map[string]any{
+			"model": model, "requestBody": map[string]any{"model": model, "prompt": "a cat", "duration": 8}, "usagePurpose": "billing_ratios",
+		})
+		require.NoError(t, err)
+		assert.Nil(t, value)
+	})
+}
+
+func TestSeedance88VideoLifecycle(t *testing.T) {
+	plugin := loadSeedance88Plugin(t)
+	const model = "seedance-2.0官方版"
+	ctx := map[string]any{"model": model, "upstreamModel": model, "baseUrl": "https://api.88api.ai", "apiKey": "test-channel-key", "requestBody": map[string]any{"model": model, "prompt": "a cat", "duration": 8}}
+	submission := callSeedance88Hook(t, plugin, "parseSubmitResponse", ctx, map[string]any{"statusCode": 200, "body": map[string]any{"id": "video_upstream", "status": "queued"}})
+	assert.Equal(t, "video_upstream", submission["taskId"])
+	_, err := plugin.Engine.Call(t.Context(), "parseSubmitResponse", ctx, map[string]any{"statusCode": 200, "body": map[string]any{"status": "queued"}})
+	require.Error(t, err)
+
+	t.Run("polling uses escaped id and upstream authentication", func(t *testing.T) {
+		query := callSeedance88Hook(t, plugin, "buildQueryRequest", map[string]any{"baseUrl": ctx["baseUrl"], "apiKey": ctx["apiKey"], "taskId": "id/with?query"})
+		assert.Equal(t, "https://api.88api.ai/v1/videos/id%2Fwith%3Fquery", query["url"])
+		assert.Equal(t, "Bearer test-channel-key", query["headers"].(map[string]any)["Authorization"])
+		for _, taskID := range []string{".", ".."} {
+			_, err := plugin.Engine.Call(t.Context(), "buildQueryRequest", map[string]any{"baseUrl": ctx["baseUrl"], "apiKey": ctx["apiKey"], "taskId": taskID})
+			require.Error(t, err, "dot segments must not change the upstream request path")
+		}
+	})
+
+	t.Run("status determines success and preserves upstream failures", func(t *testing.T) {
+		for _, tc := range []struct {
+			status string
+			want   string
+		}{{"queued", "QUEUED"}, {"in_progress", "IN_PROGRESS"}, {"completed", "SUCCESS"}, {"failed", "FAILURE"}, {"unknown", "UNKNOWN"}, {"unexpected", "UNKNOWN"}, {"", "UNKNOWN"}} {
+			result := callSeedance88Hook(t, plugin, "parseTaskResult", map[string]any{}, map[string]any{
+				"status": tc.status, "progress": 100, "url": "https://cdn.example/video.mp4?signature=abc%2Bdef",
+				"error": map[string]any{"code": "provider_error", "message": "video failed"},
+			})
+			assert.Equal(t, tc.want, result["status"], tc.status)
+			if tc.want == "FAILURE" {
+				assert.Contains(t, result["reason"], "video failed")
+			}
+		}
+		rendered, err := plugin.Engine.CallPath(t.Context(), "protocols", []string{"openai_video", "render"}, map[string]any{}, map[string]any{"status": "FAILURE", "data": map[string]any{"status": "failed", "error": map[string]any{"code": "provider_error", "message": "video failed"}}})
+		require.NoError(t, err)
+		encoded, err := common.Marshal(rendered)
+		require.NoError(t, err)
+		var response map[string]any
+		require.NoError(t, common.Unmarshal(encoded, &response))
+		assert.Equal(t, map[string]any{"code": "provider_error", "message": "video failed"}, response["error"])
+	})
+
+	t.Run("completion never replaces the frozen submitted billing facts", func(t *testing.T) {
+		for _, duration := range []any{0, -1, 4.5, 15, 1e30, "15"} {
+			facts := callSeedance88Hook(t, plugin, "extractUsageOnComplete", map[string]any{"model": model, "state": submission["state"]}, map[string]any{"status": "SUCCESS"}, map[string]any{"status": "completed", "duration": duration, "resolution": "1080p"})
+			assert.Empty(t, facts)
+		}
+	})
+
+	t.Run("completed results retain a playable URL and only publish successful artifacts", func(t *testing.T) {
+		for _, field := range []string{"url", "video_url", "result_url"} {
+			result := callSeedance88Hook(t, plugin, "parseTaskResult", map[string]any{}, map[string]any{"status": "completed", field: "https://cdn.example/video.mp4"})
+			assert.Equal(t, "SUCCESS", result["status"])
+			assert.Equal(t, "https://cdn.example/video.mp4", result["url"])
+		}
+		for _, status := range []string{"QUEUED", "IN_PROGRESS", "FAILURE", "SUCCESS"} {
+			value, err := plugin.Engine.Call(t.Context(), "listArtifacts", map[string]any{"status": status, "data": map[string]any{"url": "https://cdn.example/video.mp4"}})
+			require.NoError(t, err)
+			encoded, err := common.Marshal(value)
+			require.NoError(t, err)
+			var artifacts []map[string]any
+			require.NoError(t, common.Unmarshal(encoded, &artifacts))
+			if status == "SUCCESS" {
+				require.Len(t, artifacts, 1)
+				assert.Equal(t, "video", artifacts[0]["key"])
+				assert.Equal(t, "video", artifacts[0]["type"])
+			} else {
+				assert.Empty(t, artifacts)
+			}
+		}
+	})
+
+	t.Run("content uses the result URL verbatim without any API credential", func(t *testing.T) {
+		const videoURL = "https://cdn.example/video.mp4?signature=abc%2Bdef&expires=123"
+		for _, field := range []string{"url", "video_url", "result_url"} {
+			for _, method := range []string{"GET", "HEAD"} {
+				content := callSeedance88Hook(t, plugin, "buildContentRequest", map[string]any{
+					"baseUrl": ctx["baseUrl"], "apiKey": ctx["apiKey"], "authHeader": "Bearer test-channel-key", "artifactKey": "video",
+					"data": map[string]any{field: videoURL}, "clientRequest": map[string]any{"method": method, "headers": map[string]any{"Authorization": "Bearer client-key"}},
+				})
+				assert.Equal(t, videoURL, content["url"])
+				assert.Equal(t, "GET", content["method"], "the host suppresses the media body for client HEAD requests")
+				assert.Equal(t, true, content["credentialless"])
+				assert.Empty(t, content["headers"])
+			}
+		}
+	})
+}
+
 func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {
 	generation := jsplugin.DefaultRegistry.Generation()
 	require.NotNil(t, generation)
@@ -108,7 +447,7 @@ func TestBuiltInTaskPluginResponsesAndUsageContracts(t *testing.T) {
 					break
 				}
 			}
-			require.Equal(t, key != "mengwuxian", foundResponses, "only Mengwuxian omits the existing Responses contract")
+			require.Equal(t, key != "mengwuxian" && key != "88api-seedance", foundResponses, "plugins without a Responses surface must not claim its models")
 			if foundResponses {
 				assert.Equal(t, []string{"stream", "sync", "background"}, responsesClaim.Supports)
 			}
@@ -146,7 +485,7 @@ func TestBuiltInResponsesDecodersEchoChannelMappedAlias(t *testing.T) {
 			registry := jsplugin.NewRegistry()
 			plugin, registerErr := registry.RegisterFactory(source, jsplugin.Options{Key: key})
 			require.NoError(t, registerErr)
-			if key == "mengwuxian" {
+			if key == "mengwuxian" || key == "88api-seedance" {
 				return
 			}
 			require.NotEmpty(t, plugin.Meta.Models)
@@ -378,4 +717,34 @@ func TestBuiltInPluginsAddressNewAPIUpstreamOnNativeRoutes(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestSeedance88ExtendedInputs(t *testing.T) {
+	plugin := loadSeedance88Plugin(t)
+	for _, model := range []string{"seedance-2.5官方版", "seedance-2.0官方版", "seedance-2.0-fast官方版", "seedance-2.0-mini官方版", "SD2.0", "SD2.5"} {
+		t.Run(model, func(t *testing.T) {
+			body := map[string]any{"model": model, "images": []any{"https://images.example/a.png", "https://images.example/b.png"}, "metadata": map[string]any{"referenceVideos": []any{"https://media.example/v.mp4"}, "referenceAudios": []any{"https://media.example/a.wav"}}}
+			decoded, err := decodeSeedance88Request(t, plugin, model, map[string]any{"kind": "json", "value": body})
+			require.NoError(t, err)
+			request := decoded["requestBody"].(map[string]any)
+			assert.NotEmpty(t, request["prompt"])
+			assert.Equal(t, body["metadata"], request["metadata"])
+			assert.Equal(t, "image_to_video", decoded["action"])
+		})
+	}
+	for _, model := range []string{"SD2.0", "SD2.5"} {
+		for _, resolution := range []string{"480p", "720p", "1080p"} {
+			body := map[string]any{"model": model, "prompt": "walk", "resolution": resolution}
+			_, err := decodeSeedance88Request(t, plugin, model, map[string]any{"kind": "json", "value": body})
+			require.NoError(t, err)
+		}
+	}
+	for _, metadata := range []map[string]any{
+		{"firstFrame": "https://images.example/a.png", "referenceVideos": []any{"https://media.example/v.mp4"}},
+		{"referenceAudios": []any{"data:audio/wav;base64,AA=="}},
+		{"referenceVideos": []any{"https://a.example/1", "https://a.example/2", "https://a.example/3", "https://a.example/4"}},
+	} {
+		_, err := decodeSeedance88Request(t, plugin, "seedance-2.0官方版", map[string]any{"kind": "json", "value": map[string]any{"prompt": "walk", "metadata": metadata}})
+		require.Error(t, err)
+	}
 }
