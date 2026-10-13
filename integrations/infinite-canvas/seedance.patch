@@ -11,10 +11,12 @@
  - 当前 AI API Key 存在浏览器本地，并由前端直接请求 OpenAI 兼容接口；涉及安全说明时要写清楚。
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,12 @@
  # CHANGELOG
  
  ## Unreleased
++
+++ [调整] 渠道的「视频接入方式」网关选项更名为「DLN网关」，DLN 网关地址默认使用内置多素材接入，仍可手动切回通用 OpenAI 视频。
 +
 ++ [修复] 直连 88API 官方地址自动启用多素材 URL 提交，保留多图顺序和用户提示词，避免落入通用单文件上传。
 +
@@ -24,11 +26,10 @@
  
 --- a/docs/content/docs/progress/pending-test.mdx
 +++ b/docs/content/docs/progress/pending-test.mdx
-@@ -4,6 +4,16 @@
- ---
+@@ -5,6 +5,16 @@
  
  # Pending Tests
-+
+ 
 +## 88API Seedance 多素材接入
 +
 +- 直连 `https://api.88api.ai`（或 `/v1`）自动启用内置多素材请求；不依赖网关接入开关。每张参考图先申请上传、完成 PUT，最终生成只发送有序 `images` URL 数组和原始提示词，不设置首尾帧。直连上传凭证请求省略网关专属 `model` 字段。当前真实上游生成仍待验收。
@@ -38,9 +39,10 @@
 +- 渠道编辑新增“视频接入方式”，需选择“88API Seedance／SD（通过我们的网关）”；其它渠道的同名模型保持原请求。自定义脚本仍优先；从旧手册迁移时需清空单图脚本并保存渠道。正常内置路径返回公共任务 ID，沿用画布现有持久化与状态查询；已取得 ID 的任务不以重新 POST 代替查询。
 +- 待真实验收：配好运行新插件及上传接口的网关、对应模型渠道／用户 Key 后，逐项验证图片、音视频素材真实上传、首尾帧顺序和最终视频播放；核对模型权限、实际费用及失败退款。离线契约测试通过不等于上游生成成功。
 +- 当前分组及管理员价格不自动修改；原有画布、渠道、脚本和凭据不自动覆盖。
- 
++
  The current release needs manual verification in these areas:
  
+ - Canvas image previews: canvas image nodes, the left element list, the node reference bar, my-assets cards, the asset picker, image workbench result cards and history thumbnails, and the image/video workbench reference strips all render from a preview capped at a 768px long edge, so image-heavy views no longer decode the originals. Previews live locally only: canvas data, asset data, generation history, exported zips, and WebDAV sync must never contain preview content, and previews should be cleaned up when an image is deleted or no longer used. Opening the full-size image, editing, downloading, exporting, and generation references must keep using the original; an image that is already at or under 768px, exists only as a remote URL, or uses a custom cover should fall back to the original.
 --- a/web/src/components/canvas/canvas-node-prompt-panel.tsx
 +++ b/web/src/components/canvas/canvas-node-prompt-panel.tsx
 @@ -1,10 +1,11 @@
@@ -81,7 +83,7 @@
 --- a/web/src/components/layout/channel-editor-drawer.tsx
 +++ b/web/src/components/layout/channel-editor-drawer.tsx
 @@ -1,3 +1,4 @@
-+import { isDirect88Api } from "@/lib/seedance-capabilities";
++import { isDirect88Api, usesSeedanceAdapter } from "@/lib/seedance-capabilities";
  import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
  import { ListPlus, Trash2 } from "lucide-react";
  import { useEffect, useState } from "react";
@@ -91,8 +93,8 @@
                  </label>
 +                {draft.apiFormat === "openai" ? <label className="block md:col-span-2">
 +                    <span className="mb-1 block text-sm font-medium">视频接入方式</span>
-+                    <Select aria-label="视频接入方式" className="w-full" value={isDirect88Api(draft.baseUrl) ? "direct88api" : draft.videoAdapter || "standard"} options={[...(isDirect88Api(draft.baseUrl) ? [{label:"88API 直连（自动多素材上传）",value:"direct88api"}] : []), {label:"通用 OpenAI 视频",value:"standard"},{label:"88API Seedance／SD（通过我们的网关）",value:"88api"}]} onChange={value => patch({videoAdapter:value === "88api" ? "88api" : undefined})} />
-+                    {isDirect88Api(draft.baseUrl) ? <span className="mt-1 block text-xs">已识别 88API 官方地址：多张参考图会分别上传，再与提示词一起提交。保持全能参考模式即可，无需更换地址或 Key。</span> : draft.videoAdapter === "88api" ? <span className="mt-1 block text-xs">填写已升级网关地址和用户网关 Key。支持无提示词素材生成、多图、首尾帧及参考音视频；分辨率按模型开放，已有自定义脚本仍优先。</span> : null}
++                    <Select aria-label="视频接入方式" className="w-full" value={isDirect88Api(draft.baseUrl) ? "direct88api" : usesSeedanceAdapter(draft) ? "88api" : "standard"} options={[...(isDirect88Api(draft.baseUrl) ? [{label:"88API 直连（自动多素材上传）",value:"direct88api"}] : []), {label:"DLN网关",value:"88api"},{label:"通用 OpenAI 视频",value:"standard"}]} onChange={value => patch({videoAdapter:value === "88api" ? "88api" : "standard"})} />
++                    {isDirect88Api(draft.baseUrl) ? <span className="mt-1 block text-xs">已识别 88API 官方地址：多张参考图会分别上传，再与提示词一起提交。保持全能参考模式即可，无需更换地址或 Key。</span> : usesSeedanceAdapter(draft) ? <span className="mt-1 block text-xs">已识别 DLN 网关地址：默认按内置多素材接入提交，无需额外设置。支持无提示词素材生成、多图、首尾帧及参考音视频；分辨率按模型开放，已有自定义脚本仍优先。改用「通用 OpenAI 视频」可回到通用请求。</span> : draft.videoAdapter === "88api" ? <span className="mt-1 block text-xs">填写已升级的 DLN 网关地址和用户网关 Key。支持无提示词素材生成、多图、首尾帧及参考音视频；分辨率按模型开放，已有自定义脚本仍优先。</span> : null}
 +                </label> : null}
                  <label className="block md:col-span-2">
                      <span className="mb-1 block text-sm font-medium">API Key</span>
@@ -175,7 +177,7 @@
                  key={value}
 --- /dev/null
 +++ b/web/src/lib/seedance-capabilities.ts
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,63 @@
 +// 88API official and cloud contracts, verified 2026-10-12.
 +// Exact model IDs only: similarly named models at other providers are unrelated.
 +export type SeedanceCapabilities = {
@@ -211,6 +213,8 @@
 +export const seedanceDefaultPrompt = "保持参考素材中的主体外观和风格，生成自然连贯的动作与镜头";
 +
 +
++export type VideoAdapter = "88api" | "standard";
++
 +export function isDirect88Api(baseUrl: string): boolean {
 +    try {
 +        const url = new URL(baseUrl);
@@ -220,13 +224,27 @@
 +    }
 +}
 +
-+export function usesSeedanceAdapter(config: { baseUrl: string; videoAdapter?: "88api" }): boolean {
-+    return config.videoAdapter === "88api" || isDirect88Api(config.baseUrl);
++// The DLN gateway (Niu-DaLi) exposes the same multi-asset Seedance contract as
++// the 88API direct endpoint, so its address alone is enough to opt in — the
++// channel editor no longer needs the per-channel adapter switch to be set.
++export function isDlnGateway(baseUrl: string): boolean {
++    try {
++        return new URL(baseUrl).hostname === "8.216.57.93";
++    } catch {
++        return false;
++    }
++}
++
++export function usesSeedanceAdapter(config: { baseUrl: string; videoAdapter?: VideoAdapter }): boolean {
++    if (isDirect88Api(config.baseUrl)) return true;
++    // "通用 OpenAI 视频" stays an explicit opt-out even on the gateway address.
++    if (config.videoAdapter === "standard") return false;
++    return config.videoAdapter === "88api" || isDlnGateway(config.baseUrl);
 +}
 --- a/web/src/lib/video-capabilities.ts
 +++ b/web/src/lib/video-capabilities.ts
 @@ -1,3 +1,4 @@
-+import { getSeedanceCapabilities, usesSeedanceAdapter } from "./seedance-capabilities";
++import { getSeedanceCapabilities, usesSeedanceAdapter, type VideoAdapter } from "./seedance-capabilities";
  import i18n from "@/i18n";
  import { computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
  import { modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
@@ -235,7 +253,7 @@
  };
  
 -export function getNiuVideoCapabilities(baseUrl: string, model: string) {
-+export function getNiuVideoCapabilities(baseUrl: string, model: string, videoAdapter?: "88api") {
++export function getNiuVideoCapabilities(baseUrl: string, model: string, videoAdapter?: VideoAdapter) {
 +    const seedance = usesSeedanceAdapter({baseUrl, videoAdapter}) ? getSeedanceCapabilities(modelOptionName(model)) : undefined;
 +    if (seedance) return seedance;
      try {
@@ -325,7 +343,7 @@
          }
          setAssetPickerOpen(false);
      };
-@@ -774,9 +774,9 @@
+@@ -771,9 +774,9 @@
      };
  }
  
@@ -451,7 +469,7 @@
 --- a/web/src/stores/use-config-store.ts
 +++ b/web/src/stores/use-config-store.ts
 @@ -1,3 +1,4 @@
-+import { getSeedanceCapabilities } from "@/lib/seedance-capabilities";
++import { getSeedanceCapabilities, type VideoAdapter } from "@/lib/seedance-capabilities";
  import { useMemo } from "react";
  import { create } from "zustand";
  import { persist } from "zustand/middleware";
@@ -459,7 +477,7 @@
  };
  
  export type ModelChannel = {
-+    videoAdapter?: "88api";
++    videoAdapter?: VideoAdapter;
      id: string;
      name: string;
      baseUrl: string;
@@ -467,7 +485,7 @@
  };
  
  export type AiConfig = {
-+    videoAdapter?: "88api";
++    videoAdapter?: VideoAdapter;
      channelMode: "remote" | "local";
      baseUrl: string;
      apiKey: string;
@@ -483,7 +501,7 @@
          apiKey: channel?.apiKey || "",
          apiFormat,
          models: normalizeChannelModels(channel?.models),
-+        ...(channel?.videoAdapter === "88api" ? { videoAdapter: "88api" as const } : {}),
++        ...(channel?.videoAdapter === "88api" || channel?.videoAdapter === "standard" ? { videoAdapter: channel.videoAdapter } : {}),
      };
  }
  
