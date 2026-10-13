@@ -21,6 +21,29 @@ bun run dev --port 3001 --strictPort
 
 首次访问默认渠道的 Base URL 为 `https://8.216.57.93`，模型目录请求为 `https://8.216.57.93/v1/models`。Base URL 不应填写完整的 `/v1/models`，否则生成接口会拼接到错误路径。API Key 留空，由每位用户填写自己的 Key。
 
+## 子路径部署（`/canvas/`）必须应用 `subpath.patch`
+
+生产把画布挂在 `https://8.216.57.93/canvas/` 子路径下（见 `niu-dali-infinite-canvas-deploy`），
+构建时用 `VITE_BASE=/canvas/`。**只设 `VITE_BASE` 不够**：它只影响静态资源 URL，
+SPA 路由仍需补丁，否则应用内所有 `<Link to="/video">` 会解析成**裸路径 `/video`**，
+落在网关域名上 —— 客户端点击看似正常，但**刷新、直接打开或收藏任何子页都会 404**。
+
+`subpath.patch` 由 `apply-defaults.sh` 在 `defaults.patch`、`seedance.patch` 之后应用（幂等），包含三处：
+
+| 文件 | 改动 |
+| --- | --- |
+| `web/src/router.tsx` | `createBrowserRouter(..., { basename: import.meta.env.BASE_URL.replace(/\/$/, "") \|\| "/" })` |
+| `web/src/lib/canvas/plugin-loader.ts` | 插件清单 URL 补 `import.meta.env.BASE_URL` 前缀 |
+| `web/vite.config.ts` | 本地插件清单里的插件 URL 补 base 前缀 |
+
+`VITE_BASE` 为空时 basename 退化为 `/`，对根路径部署无副作用。
+
+> ⚠️ 2026-10-13 的生产产物（`index-DZIKq2vo.js`）就是在**漏掉 `router.tsx` 这一处**的情况下构建的：
+> bundle 里 `createBrowserRouter([...])` 调用**没有第二参数**（无 `basename`），
+> 于是 `/canvas/` 下点击「视频创作台」跳到 `/video`，刷新即 404。
+> 重新发布画布时务必确认 `apply-defaults.sh` 输出
+> `Gateway defaults, Seedance integration and /canvas/ sub-path support applied.`。
+
 默认注册目录中已确认的四个视频模型：`Sd-2.0fast`、`Sd-2.0满血933`、`Sd-2.5`、`minmax-h3`，默认选择 `Sd-2.0fast`、4 秒、720p、16:9、参考模式。这些模型显式标记为视频，避免按名称误判为文本。当前目录未返回图像、文本或音频模型，因此不预选这些能力的模型；不同 Key 的实际模型权限可能不同，可在渠道编辑器中重新获取目录。
 
 视频使用画布内置 OpenAI 协议：Bearer 鉴权，创建请求 `/v1/videos`，轮询 `/v1/videos/:id`。旧示例中的供应商原生脚本已移除；它们请求 `/api/v1/models`、`/api/v1/video-tasks`，直接连接此网关会返回 404。

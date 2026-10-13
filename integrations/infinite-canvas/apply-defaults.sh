@@ -18,8 +18,9 @@ if [ "$actual_revision" != "$expected_revision" ]; then
 fi
 
 seedance_patch="$integration_dir/seedance.patch"
-if git -C "$canvas_dir" apply --reverse --check "$seedance_patch" 2>/dev/null; then
-    echo "Gateway defaults and Seedance integration are already applied."
+subpath_patch="$integration_dir/subpath.patch"
+if git -C "$canvas_dir" apply --reverse --check "$subpath_patch" 2>/dev/null; then
+    echo "Gateway defaults, Seedance integration and sub-path support are already applied."
     exit 0
 fi
 
@@ -30,4 +31,8 @@ if ! git -C "$canvas_dir" apply --reverse --check "$patch_file" 2>/dev/null; the
 fi
 git -C "$canvas_dir" apply --check "$seedance_patch"
 git -C "$canvas_dir" apply "$seedance_patch"
-echo "Gateway defaults and Seedance integration applied. Rebuild the canvas before deployment."
+if ! git -C "$canvas_dir" apply --reverse --check "$subpath_patch" 2>/dev/null; then
+    git -C "$canvas_dir" apply --check "$subpath_patch"
+    git -C "$canvas_dir" apply "$subpath_patch"
+fi
+echo "Gateway defaults, Seedance integration and /canvas/ sub-path support applied. Rebuild the canvas before deployment."

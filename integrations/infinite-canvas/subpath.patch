@@ -1,0 +1,84 @@
+--- a/web/src/router.tsx
++++ b/web/src/router.tsx
+@@ -12,24 +12,31 @@
+ import PromptsPage from "@/pages/prompts";
+ import VideoPage from "@/pages/video";
+ 
+-export const router = createBrowserRouter([
+-    {
+-        element: (
+-            <UserLayout>
+-                <AnalyticsTracker />
+-                <Outlet />
+-            </UserLayout>
+-        ),
+-        children: [
+-            { path: "/", element: <HomePage /> },
+-            { path: "/image", element: <ImagePage /> },
+-            { path: "/video", element: <VideoPage /> },
+-            { path: "/assets", element: <AssetsPage /> },
+-            { path: "/prompts", element: <PromptsPage /> },
+-            { path: "/canvas", element: <CanvasPage /> },
+-            { path: "/canvas/:id", element: <CanvasProjectPage /> },
+-            { path: "/config", element: <ConfigPage /> },
+-        ],
+-    },
+-    { path: "*", element: <NotFound /> },
+-]);
++// Deployed under a sub-path (e.g. /canvas/) the router must strip the Vite base
++// prefix, otherwise every in-app link resolves against the parent origin.
++const basename = import.meta.env.BASE_URL.replace(/\/$/, "") || "/";
++
++export const router = createBrowserRouter(
++    [
++        {
++            element: (
++                <UserLayout>
++                    <AnalyticsTracker />
++                    <Outlet />
++                </UserLayout>
++            ),
++            children: [
++                { path: "/", element: <HomePage /> },
++                { path: "/image", element: <ImagePage /> },
++                { path: "/video", element: <VideoPage /> },
++                { path: "/assets", element: <AssetsPage /> },
++                { path: "/prompts", element: <PromptsPage /> },
++                { path: "/canvas", element: <CanvasPage /> },
++                { path: "/canvas/:id", element: <CanvasProjectPage /> },
++                { path: "/config", element: <ConfigPage /> },
++            ],
++        },
++        { path: "*", element: <NotFound /> },
++    ],
++    { basename },
++);
+--- a/web/src/lib/canvas/plugin-loader.ts
++++ b/web/src/lib/canvas/plugin-loader.ts
+@@ -117,7 +117,7 @@
+ async function loadLocalPlugins() {
+     let urls: unknown;
+     try {
+-        const response = await fetch("/plugins/index.json");
++        const response = await fetch(`${import.meta.env.BASE_URL}plugins/index.json`);
+         if (!response.ok) return;
+         urls = await response.json();
+     } catch {
+--- a/web/vite.config.ts
++++ b/web/vite.config.ts
+@@ -14,12 +14,14 @@
+ // The frontend can discover and list them when enabled; development reads the directory live, while builds emit a static registry.
+ function localPluginsManifest(): Plugin {
+     const pluginsDir = resolve(webDir, "public/plugins");
++    const base = process.env.VITE_BASE || "/";
++    const basePrefix = base.endsWith("/") ? base : `${base}/`;
+     const listLocalPlugins = () => {
+         try {
+             return readdirSync(pluginsDir)
+                 .filter((file) => file.endsWith(".js"))
+                 .sort()
+-                .map((file) => `/plugins/${file}`);
++                .map((file) => `${basePrefix}plugins/${file}`);
+         } catch {
+             return [];
+         }
