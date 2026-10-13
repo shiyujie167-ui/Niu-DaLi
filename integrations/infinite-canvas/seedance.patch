@@ -325,6 +325,18 @@
          }
          setAssetPickerOpen(false);
      };
+@@ -774,9 +774,9 @@
+     };
+ }
+ 
+-function buildVideoConfig(config: AiConfig, model: string): AiConfig {
++export function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+     const requestConfig = resolveModelRequestConfig(config, model);
+-    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model) : undefined;
++    const capabilities = requestConfig.apiFormat === "openai" && !resolveModelScript(config, model) ? getNiuVideoCapabilities(requestConfig.baseUrl, model, requestConfig.videoAdapter) : undefined;
+     return {
+         ...config,
+         model,
 --- /dev/null
 +++ b/web/src/services/api/seedance-video.ts
 @@ -0,0 +1,64 @@
@@ -639,4 +651,59 @@
 +    expect(/\bdisabled=""/.test(view.buttons.get("480p")!)).toBe(false);
 +    expect(/\bdisabled=""/.test(view.buttons.get("720p")!)).toBe(true);
 +    expect(view.html).toContain("图片最多 9 张");
++});
+--- /dev/null
++++ b/web/tests/video-config.test.ts
+@@ -0,0 +1,52 @@
++import { afterAll, beforeAll, expect, test } from "bun:test";
++
++import type { AiConfig } from "../src/stores/use-config-store";
++import { installBrowserStorage } from "./helpers/browser-storage";
++
++let restoreStorage: () => void;
++let buildVideoConfig: (config: AiConfig, model: string) => AiConfig;
++let videoSettingsError: (config: AiConfig) => string;
++let defaultConfig: AiConfig;
++
++beforeAll(async () => {
++    restoreStorage = installBrowserStorage();
++    ({ buildVideoConfig } = await import("../src/pages/video/index"));
++    ({ videoSettingsError } = await import("../src/lib/video-capabilities"));
++    ({ defaultConfig } = await import("../src/stores/use-config-store"));
++});
++afterAll(() => restoreStorage());
++
++function seedanceConfig(resolution: string, size = "16:9"): AiConfig {
++    return {
++        ...structuredClone(defaultConfig),
++        model: "default::SD2.5",
++        videoModel: "default::SD2.5",
++        vquality: resolution,
++        size,
++        channels: [{ ...structuredClone(defaultConfig.channels[0]), videoAdapter: "88api" as const, apiKey: "fixture-key" }],
++    };
++}
++
++// Regression: the workbench dropped the channel's 88api adapter when it read video
++// capabilities, so the ratio was rewritten into a 720p pixel string before the
++// settings check ran. Every resolution except 720p was then rejected locally.
++test.each(["480", "720", "1080"])("gateway Seedance keeps the %sp ratio through buildVideoConfig", (resolution) => {
++    const config = seedanceConfig(resolution);
++    const built = buildVideoConfig(config, "default::SD2.5");
++    expect(built.size).toBe(config.size);
++    expect(videoSettingsError(built)).toBe("");
++});
++
++test("a fixed-tier gateway model keeps its ratio as well", () => {
++    const config = seedanceConfig("480", "9:16");
++    config.model = "default::SD2.5 480P";
++    config.videoModel = "default::SD2.5 480P";
++    const built = buildVideoConfig(config, "default::SD2.5 480P");
++    expect(built.size).toBe("9:16");
++    expect(videoSettingsError(built)).toBe("");
++});
++
++test("models without a capability entry still normalise their size", () => {
++    const config: AiConfig = { ...structuredClone(defaultConfig), model: "default::unlisted-video", videoModel: "default::unlisted-video", vquality: "720", size: "16:9", channels: [{ ...structuredClone(defaultConfig.channels[0]), apiKey: "fixture-key" }] };
++    expect(buildVideoConfig(config, "default::unlisted-video").size).toBe("1280x720");
 +});
