@@ -89,12 +89,18 @@ export function useTopNavLinks(): TopNavLink[] {
   // Infinite Canvas — a separate workspace (infinite-canvas) served on its own
   // origin. It shows up as soon as its URL is configured in
   // Settings → System Information (`general_setting.canvas_link`); leaving that
-  // field empty hides the entry.
+  // field empty hides the entry. Always open it in a new tab: the workspace is a
+  // standalone app, so navigating the current tab away from the console would
+  // drop whatever the user was doing.
   const canvasLink: string | undefined = status?.canvas_link as
     | string
     | undefined
   if (canvasLink && canvasLink.trim()) {
-    links.push({ title: t('Infinite canvas'), href: canvasLink.trim() })
+    links.push({
+      title: t('Infinite canvas'),
+      href: canvasLink.trim(),
+      external: true,
+    })
   }
 
   // Docs (supports external links)

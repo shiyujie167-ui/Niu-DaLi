@@ -68,7 +68,16 @@ describe('external canvas top navigation', () => {
     ).toEqual({
       title: 'Infinite canvas',
       href: 'https://canvas.example.test/video?source=gateway',
+      external: true,
     })
+  })
+
+  it('opens the canvas in a new tab so the current page is left untouched', () => {
+    const { result } = topNavFor('https://canvas.example.test/')
+    expect(
+      result.current.find((link) => link.title === 'Infinite canvas')
+        ?.external
+    ).toBe(true)
   })
 
   it.each([undefined, '', '   '])(
