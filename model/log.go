@@ -461,13 +461,35 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
+// applyLogTypeFilter includes failed streams in the error view without changing
+// their consume type, accounting history, or visibility in the consume view.
+func applyLogTypeFilter(tx *gorm.DB, logType int) *gorm.DB {
 	if logType == LogTypeUnknown {
-		tx = LOG_DB
-	} else {
-		tx = LOG_DB.Where("logs.type = ?", logType)
+		return tx
 	}
+	if logType != LogTypeError {
+		return tx.Where("logs.type = ?", logType)
+	}
+
+	// Log.Other is JSON text; older records can have an empty value. Use the
+	// log connection's dialect because it can differ from the primary database.
+	var streamStatus string
+	switch common.LogDatabaseType() {
+	case common.DatabaseTypePostgreSQL:
+		streamStatus = "NULLIF(TRIM(logs.other), '')::jsonb #>> '{stream_status,status}'"
+	case common.DatabaseTypeMySQL:
+		streamStatus = "JSON_UNQUOTE(JSON_EXTRACT(NULLIF(TRIM(logs.other), ''), '$.stream_status.status'))"
+	case common.DatabaseTypeClickHouse:
+		streamStatus = "JSONExtractString(logs.other, 'stream_status', 'status')"
+	default: // SQLite
+		streamStatus = "json_extract(NULLIF(TRIM(logs.other), ''), '$.stream_status.status')"
+	}
+	return tx.Where("(logs.type = ? OR (logs.type = ? AND "+streamStatus+" = ?))",
+		LogTypeError, LogTypeConsume, "error")
+}
+
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+	tx := applyLogTypeFilter(LOG_DB, logType)
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
@@ -558,12 +580,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 const logSearchCountLimit = 10000
 
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
-	var tx *gorm.DB
-	if logType == LogTypeUnknown {
-		tx = LOG_DB.Where("logs.user_id = ?", userId)
-	} else {
-		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
-	}
+	tx := applyLogTypeFilter(LOG_DB.Where("logs.user_id = ?", userId), logType)
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
