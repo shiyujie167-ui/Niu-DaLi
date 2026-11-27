@@ -12,6 +12,7 @@ func CORS() gin.HandlerFunc {
 	config.AllowCredentials = true
 	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
 	config.AllowHeaders = []string{"*"}
+	config.ExposeHeaders = []string{common.KimiCacheWriteTokens5mHeader, common.KimiCacheWriteTokens1hHeader}
 	return cors.New(config)
 }
 

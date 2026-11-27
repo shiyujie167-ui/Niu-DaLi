@@ -463,8 +463,8 @@ func validateKimiChatRequest(c *gin.Context, request *dto.GeneralOpenAIRequest) 
 	if ttl := gjson.GetBytes(request.PromptCacheOptions, "ttl"); ttl.Exists() && ttl.String() != "5m" && ttl.String() != "1h" {
 		return kimiRequestFieldError(c, "prompt_cache_options.ttl", "prompt_cache_options.ttl must be 5m or 1h")
 	}
-	thinkingRequested := thinking == "enabled" || thinking == "adaptive" || (request.ReasoningEffort != "" && !thinkingDisabled)
-	if tool, ok := request.ToolChoice.(map[string]any); ok && tool["type"] == "function" && thinkingRequested && !thinkingDisabled {
+	// Kimi enables thinking by default, including when its controls are omitted.
+	if tool, ok := request.ToolChoice.(map[string]any); ok && tool["type"] == "function" && !thinkingDisabled {
 		return kimiRequestFieldError(c, "tool_choice", "tool_choice cannot name a function when thinking is enabled")
 	}
 	for i := range request.Messages {
