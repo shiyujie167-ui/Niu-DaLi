@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func privacyRouter(handler gin.HandlerFunc) *gin.Engine {
+func privacyRouter(handler gin.HandlerFunc, middlewares ...gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	engine.Use(func(c *gin.Context) {
@@ -36,6 +36,7 @@ func privacyRouter(handler gin.HandlerFunc) *gin.Engine {
 		c.Header(common.RequestIdKey, "local-request")
 		c.Header("Access-Control-Allow-Origin", "https://customer.example")
 	})
+	engine.Use(middlewares...)
 	engine.POST("/test", middleware.RouteTag("relay"), handler)
 	return engine
 }
@@ -265,17 +266,22 @@ func TestKimiCacheUsageThroughRelayPrivacy(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		model     string
+		ttl       string
+		cache5m   string
+		cache1h   string
 		stream    bool
 		malformed bool
 	}{
-		{name: "highspeed JSON", model: "kimi-k3.1-pro-highspeed"},
-		{name: "pro SSE", model: "kimi-k3.1-pro", stream: true},
-		{name: "invalid values JSON", model: "kimi-k3.1-pro-highspeed", malformed: true},
-		{name: "invalid values SSE", model: "kimi-k3.1-pro", stream: true, malformed: true},
+		{name: "5m JSON", model: "kimi-k3.1-pro-highspeed", ttl: "5m", cache5m: "2048", cache1h: "0"},
+		{name: "5m SSE", model: "kimi-k3.1-pro", ttl: "5m", cache5m: "2048", cache1h: "0", stream: true},
+		{name: "1h JSON", model: "kimi-k3.1-pro-highspeed", ttl: "1h", cache5m: "0", cache1h: "2048"},
+		{name: "1h SSE", model: "kimi-k3.1-pro", ttl: "1h", cache5m: "0", cache1h: "2048", stream: true},
+		{name: "invalid values JSON", model: "kimi-k3.1-pro-highspeed", ttl: "1h", cache5m: "0", cache1h: "2048", malformed: true},
+		{name: "invalid values SSE", model: "kimi-k3.1-pro", ttl: "1h", cache5m: "0", cache1h: "2048", stream: true, malformed: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			const cacheOptions = `{"mode":"implicit","ttl":"1h"}`
-			const usage = `"usage":{"prompt_tokens":2300,"completion_tokens":1,"total_tokens":2301,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":2048}}`
+			cacheOptions := fmt.Sprintf(`{"mode":"implicit","ttl":%q}`, tc.ttl)
+			usage := fmt.Sprintf(`"usage":{"prompt_tokens":2300,"completion_tokens":1,"total_tokens":2301,"cache_creation":{"ephemeral_5m_input_tokens":%s,"ephemeral_1h_input_tokens":%s}}`, tc.cache5m, tc.cache1h)
 
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/v1/chat/completions", r.URL.Path)
@@ -292,8 +298,9 @@ func TestKimiCacheUsageThroughRelayPrivacy(t *testing.T) {
 				w.Header().Set("X-Client-Request-Id", "private-client-request")
 				w.Header().Set("Set-Cookie", "private-cookie")
 				w.Header().Set("Msh-Usage-Account", "private-account")
-				w.Header().Set(common.KimiCacheWriteTokens5mHeader, "0")
-				w.Header().Set(common.KimiCacheWriteTokens1hHeader, "2048")
+				w.Header().Set("Access-Control-Expose-Headers", "Msh-Usage-Account")
+				w.Header().Set(common.KimiCacheWriteTokens5mHeader, tc.cache5m)
+				w.Header().Set(common.KimiCacheWriteTokens1hHeader, tc.cache1h)
 				if tc.malformed {
 					w.Header().Set(common.KimiCacheWriteTokens5mHeader, "https://private.invalid")
 					w.Header().Add(common.KimiCacheWriteTokens1hHeader, "2049")
@@ -338,31 +345,35 @@ func TestKimiCacheUsageThroughRelayPrivacy(t *testing.T) {
 				require.NoError(t, err)
 				_, relayErr := adaptor.DoResponse(c, resp.(*http.Response), info)
 				require.Nil(t, relayErr)
-			})
+			}, middleware.CORS())
 
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(fmt.Sprintf(
 				`{"model":%q,"stream":%t,"messages":[{"role":"user","content":"OK"}],"prompt_cache_options":%s}`, tc.model, tc.stream, cacheOptions,
 			)))
 			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "https://customer.example")
 			engine.ServeHTTP(recorder, request)
 
 			result := recorder.Result()
 			defer result.Body.Close()
 			require.Equal(t, http.StatusOK, result.StatusCode)
+			assert.Equal(t, "*", result.Header.Get("Access-Control-Allow-Origin"))
+			assert.ElementsMatch(t, []string{common.KimiCacheWriteTokens5mHeader, common.KimiCacheWriteTokens1hHeader}, strings.Split(result.Header.Get("Access-Control-Expose-Headers"), ","))
 			if tc.malformed {
 				assert.Empty(t, result.Header.Values(common.KimiCacheWriteTokens5mHeader))
 				assert.Empty(t, result.Header.Values(common.KimiCacheWriteTokens1hHeader))
 			} else {
-				assert.Equal(t, []string{"0"}, result.Header.Values(common.KimiCacheWriteTokens5mHeader))
-				assert.Equal(t, []string{"2048"}, result.Header.Values(common.KimiCacheWriteTokens1hHeader))
+				assert.Equal(t, []string{tc.cache5m}, result.Header.Values(common.KimiCacheWriteTokens5mHeader))
+				assert.Equal(t, []string{tc.cache1h}, result.Header.Values(common.KimiCacheWriteTokens1hHeader))
 			}
 			for _, header := range []string{"Server", "Via", "X-Request-Id", "X-Client-Request-Id", "Set-Cookie", "Msh-Usage-Account"} {
 				assert.Empty(t, result.Header.Values(header), header)
 			}
 			assert.Equal(t, "local-request", result.Header.Get(common.RequestIdKey))
 			assert.NotContains(t, recorder.Body.String(), "private-provider")
-			assert.Contains(t, recorder.Body.String(), `"ephemeral_1h_input_tokens":2048`)
+			assert.Contains(t, recorder.Body.String(), `"ephemeral_5m_input_tokens":`+tc.cache5m)
+			assert.Contains(t, recorder.Body.String(), `"ephemeral_1h_input_tokens":`+tc.cache1h)
 			if tc.stream {
 				assert.Contains(t, recorder.Body.String(), "data: [DONE]")
 			}
@@ -438,13 +449,19 @@ func TestKimiChatRequestValidation(t *testing.T) {
 		{name: "thinking disabled rejects top_p 1", model: highspeed, parameters: `,"thinking":{"type":"disabled"},"top_p":1`, field: "top_p"},
 		{name: "standard model keeps provider validation", model: "kimi-k3.1-pro", parameters: `,"temperature":0.7,"top_p":0.5`, valid: true},
 		{name: "named tool with thinking", model: highspeed, parameters: `,"thinking":{"type":"enabled"},"tool_choice":{"type":"function","function":{"name":"lookup"}}`, field: "tool_choice"},
+		{name: "named tool with default thinking", model: highspeed, parameters: `,"tool_choice":{"type":"function","function":{"name":"lookup"}}`, field: "tool_choice"},
+		{name: "named tool with omitted thinking type", model: "kimi-k3.1-pro", parameters: `,"thinking":{},"tool_choice":{"type":"function","function":{"name":"lookup"}}`, field: "tool_choice"},
 		{name: "named tool with effort", model: "kimi-k3.1-pro", parameters: `,"reasoning_effort":"high","tool_choice":{"type":"function","function":{"name":"lookup"}}`, field: "tool_choice"},
 		{name: "named tool with thinking off", model: highspeed, parameters: `,"thinking":{"type":"disabled"},"tool_choice":{"type":"function","function":{"name":"lookup"}}`, valid: true},
+		{name: "named tool with effort none", model: "kimi-k3.1-pro", parameters: `,"reasoning_effort":"none","tool_choice":{"type":"function","function":{"name":"lookup"}}`, valid: true},
 		{name: "automatic tool with high effort preserved", model: highspeed, parameters: `,"thinking":{"type":"enabled","effort":"high"},"tool_choice":"auto"`, valid: true},
 		{name: "explicit cache mode", model: "kimi-k3.1-pro", parameters: `,"prompt_cache_options":{"mode":"explicit"}`, field: "prompt_cache_options.mode"},
 		{name: "implicit cache mode", model: highspeed, parameters: `,"prompt_cache_options":{"mode":"implicit","ttl":"1h"}`, valid: true},
 		{name: "unsupported cache ttl", model: highspeed, parameters: `,"prompt_cache_options":{"ttl":"2h"}`, field: "prompt_cache_options.ttl"},
 		{name: "developer role", model: highspeed, messages: `[{"role":"developer","content":"hi"}]`, field: "messages[0].role"},
+		{name: "standard model developer role", model: "kimi-k3.1-pro", messages: `[{"role":"developer","content":"hi"}]`, field: "messages[0].role"},
+		{name: "partial assistant continuation", model: highspeed, messages: `[{"role":"user","content":"Continue"},{"role":"assistant","content":"Conclusion:","partial":true}]`, valid: true},
+		{name: "partial explicitly disabled", model: "kimi-k3.1-pro", messages: `[{"role":"user","content":"Continue"},{"role":"assistant","content":"Conclusion:","partial":false}]`, valid: true},
 		{name: "bare base64", model: highspeed, messages: `[{"role":"user","content":[{"type":"image_url","image_url":{"url":"aGVsbG8="}}]}]`, field: "messages[0].content"},
 		{name: "image data URL", model: "kimi-k3.1-pro", messages: `[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="}}]}]`, valid: true},
 		{name: "other model developer role", model: "gpt-4o", messages: `[{"role":"developer","content":"hi"}]`, valid: true},
